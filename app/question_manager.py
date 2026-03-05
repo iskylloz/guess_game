@@ -160,6 +160,22 @@ class QuestionManager:
         if not existing:
             raise ValueError(f'Question not found: {question_id}')
 
+        # Cleanup orphaned media files (removed or replaced)
+        old_media = {
+            existing.question.image,
+            existing.question.audio,
+            existing.answer.image,
+            existing.answer.audio,
+        }
+        new_media = {
+            question_data.get('image'),
+            question_data.get('audio'),
+            answer_data.get('image'),
+            answer_data.get('audio'),
+        }
+        for path in old_media - new_media:
+            self._delete_media_file(path)
+
         now = datetime.now(timezone.utc).isoformat()
 
         conn = self._get_conn()
