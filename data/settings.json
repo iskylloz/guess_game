@@ -1,0 +1,9 @@
+{
+  "fullscreen": true,
+  "volumes": {
+    "master": 1,
+    "notifications": 1,
+    "questions": 0.5,
+    "ambiance": 1
+  }
+}
