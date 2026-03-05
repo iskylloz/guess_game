@@ -104,18 +104,32 @@ const DOM = {
         return this._toastContainer;
     },
 
-    toast(message, type = 'info', duration = 3000) {
+    toast(message, type = 'info', duration = 3000, action = null) {
         const container = this._ensureToastContainer();
         const toast = this.create('div', {
-            className: `toast toast-${type}`,
-            textContent: message
+            className: `toast toast-${type}`
         });
+        toast.appendChild(this.create('span', { textContent: message }));
+
+        if (action) {
+            toast.appendChild(this.create('button', {
+                className: 'toast-action',
+                textContent: action.label,
+                onClick: () => {
+                    if (action.onClick) action.onClick();
+                    toast.remove();
+                }
+            }));
+        }
+
         container.appendChild(toast);
 
-        setTimeout(() => {
-            toast.classList.add('toast-exit');
-            setTimeout(() => toast.remove(), 300);
-        }, duration);
+        if (duration > 0) {
+            setTimeout(() => {
+                toast.classList.add('toast-exit');
+                setTimeout(() => toast.remove(), 300);
+            }, duration);
+        }
 
         return toast;
     },

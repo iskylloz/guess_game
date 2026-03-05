@@ -1,8 +1,10 @@
 import sys
 import os
 import json
+import threading
 import webview
 from app import create_app
+from version import VERSION
 
 
 def get_base_path():
@@ -15,7 +17,8 @@ def get_base_path():
 def get_data_path():
     """Return the path for user data (persists across updates)."""
     if getattr(sys, 'frozen', False):
-        return os.path.join(os.path.dirname(sys.executable), 'data')
+        appdata = os.environ.get('APPDATA', os.path.expanduser('~'))
+        return os.path.join(appdata, 'GuessThePicture')
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
 
 
@@ -53,7 +56,7 @@ if __name__ == '__main__':
     icon_path = os.path.join(base_path, 'static', 'assets', 'icons', 'icon.png')
 
     window = webview.create_window(
-        'Guess the Picture',
+        f'Guess The Picture v{VERSION}',
         app,
         width=1280,
         height=800,
@@ -68,10 +71,18 @@ if __name__ == '__main__':
         with open(settings_path, 'w', encoding='utf-8') as f:
             json.dump(settings, f, ensure_ascii=False, indent=2)
 
+    # Check for updates in background
+    def _check_update():
+        from app.updater import check_for_update
+        result = check_for_update(VERSION)
+        if result and result.get('available'):
+            app.config['UPDATE_INFO'] = result
+
+    threading.Thread(target=_check_update, daemon=True).start()
+
     if settings.get('fullscreen', True):
         def on_shown():
             """Enter fullscreen using pywebview API for state consistency."""
-            import threading
             def delayed_fs():
                 import time
                 time.sleep(0.3)

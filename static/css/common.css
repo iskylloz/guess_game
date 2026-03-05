@@ -444,13 +444,32 @@ img { max-width: 100%; display: block; }
 }
 
 .toast {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
     padding: 12px 20px;
     border-radius: var(--radius-md);
     color: white;
     font-weight: 500;
     box-shadow: var(--shadow-md);
     animation: slideInRight var(--transition-normal);
-    max-width: 400px;
+    max-width: 500px;
+}
+
+.toast-action {
+    background: rgba(255,255,255,0.2);
+    border: 1px solid rgba(255,255,255,0.3);
+    color: white;
+    padding: 4px 12px;
+    border-radius: var(--radius-sm);
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background var(--transition-fast);
+}
+.toast-action:hover {
+    background: rgba(255,255,255,0.35);
 }
 
 .toast-info { background: var(--info); }

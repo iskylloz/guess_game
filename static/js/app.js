@@ -26,6 +26,9 @@ const App = {
         // Load persisted settings (volumes) from backend
         this._loadSettings();
 
+        // Check for updates after 3s
+        this._checkForUpdate();
+
         // Global settings gear button (persistent across pages)
         this._createSettingsButton();
 
@@ -43,6 +46,21 @@ const App = {
         } catch (e) {
             // Fallback to localStorage values (already loaded by Media)
         }
+    },
+
+    _checkForUpdate() {
+        setTimeout(async () => {
+            try {
+                const info = await API.get('/api/update-check');
+                if (info && info.available) {
+                    DOM.toast(
+                        `Nouvelle version v${info.latest} disponible !`,
+                        'info', 0,
+                        { label: 'Télécharger', onClick: () => window.open(info.url) }
+                    );
+                }
+            } catch (_) {}
+        }, 3000);
     },
 
     _createSettingsButton() {

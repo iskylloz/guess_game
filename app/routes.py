@@ -30,6 +30,22 @@ def index():
     return render_template('index.html')
 
 
+# --- Version & update ---
+
+@bp.route('/api/version')
+def get_version():
+    from version import VERSION
+    return jsonify({'version': VERSION})
+
+
+@bp.route('/api/update-check')
+def check_update():
+    info = current_app.config.get('UPDATE_INFO')
+    if info:
+        return jsonify(info)
+    return jsonify({'available': False})
+
+
 # --- Media serving ---
 
 @bp.route('/media/<path:filename>')
