@@ -351,6 +351,14 @@
     border-radius: var(--radius-md);
     box-shadow: var(--shadow-lg);
     object-fit: contain;
+    image-rendering: auto;
+    max-width: 100%;
+    max-height: 100%;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+.question-media img.sized {
+    opacity: 1;
 }
 
 .question-text {
@@ -360,6 +368,7 @@
     text-align: center;
     max-width: 80%;
     line-height: 1.4;
+    white-space: pre-wrap;
 }
 
 .answer-text {
@@ -369,6 +378,7 @@
     text-align: center;
     max-width: 80%;
     line-height: 1.4;
+    white-space: pre-wrap;
 }
 
 /* Black category question highlight */

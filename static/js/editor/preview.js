@@ -42,11 +42,15 @@ const Preview = {
             const mediaDiv = DOM.create('div', { className: 'question-media' });
             const imgEl = DOM.create('img', { src: `/media/${data.image}` });
             imgEl.addEventListener('load', () => {
-                const rect = body.getBoundingClientRect();
-                if (!rect.width || !rect.height) return;
-                const size = Media.computeImageSize(imgEl, rect.width, rect.height);
-                imgEl.style.width = size.width + 'px';
-                imgEl.style.height = size.height + 'px';
+                requestAnimationFrame(() => {
+                    const rect = body.getBoundingClientRect();
+                    const cW = rect.width || 600;
+                    const cH = rect.height || 400;
+                    const size = Media.computeImageSize(imgEl, cW, cH);
+                    imgEl.style.width = size.width + 'px';
+                    imgEl.style.height = size.height + 'px';
+                    imgEl.classList.add('sized');
+                });
             });
             mediaDiv.appendChild(imgEl);
             body.appendChild(mediaDiv);

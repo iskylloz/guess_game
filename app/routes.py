@@ -30,6 +30,21 @@ def index():
     return render_template('index.html')
 
 
+# --- Clipboard (Windows) ---
+
+@bp.route('/api/clipboard')
+def get_clipboard():
+    import subprocess
+    try:
+        result = subprocess.run(
+            ['powershell', '-command', 'Get-Clipboard'],
+            capture_output=True, text=True, timeout=2
+        )
+        return jsonify({'text': result.stdout.rstrip('\r\n')})
+    except Exception:
+        return jsonify({'text': ''})
+
+
 # --- Version & update ---
 
 @bp.route('/api/version')

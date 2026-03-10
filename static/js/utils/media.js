@@ -472,27 +472,28 @@ const Media = {
         switch (orient.type) {
             case 'ultra-wide':
                 maxW = availW * 0.98;
-                maxH = availH * 0.70;
+                maxH = availH * 0.75;
                 break;
             case 'landscape':
-                maxW = availW * 0.95;
-                maxH = availH * 0.85;
+                maxW = availW * 0.96;
+                maxH = availH * 0.90;
                 break;
             case 'square':
-                maxW = Math.min(availW * 0.85, availH * 0.85);
+                maxW = Math.min(availW * 0.90, availH * 0.90);
                 maxH = maxW;
                 break;
             case 'portrait':
-                maxH = availH * 0.92;
-                maxW = availW * 0.70;
+                maxH = availH * 0.95;
+                maxW = availW * 0.75;
                 break;
             case 'ultra-tall':
                 maxH = availH * 0.95;
-                maxW = availW * 0.55;
+                maxW = availW * 0.60;
                 break;
         }
 
-        const scale = Math.min(maxW / imgW, maxH / imgH);
+        // Don't upscale beyond native resolution
+        const scale = Math.min(maxW / imgW, maxH / imgH, 1);
         return {
             width: Math.round(imgW * scale),
             height: Math.round(imgH * scale),

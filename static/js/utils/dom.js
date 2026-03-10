@@ -214,5 +214,81 @@ const DOM = {
             clearTimeout(timer);
             timer = setTimeout(() => fn(...args), delay);
         };
+    },
+
+    // ===== CONTEXT MENU (right-click) =====
+    _contextMenu: null,
+
+    initContextMenu() {
+        document.addEventListener('contextmenu', (e) => {
+            const target = e.target;
+            const isEditable = target.matches('input[type="text"], input[type="url"], input[type="search"], input:not([type]), textarea, [contenteditable="true"]');
+            if (!isEditable) return;
+
+            e.preventDefault();
+            this._showContextMenu(e.clientX, e.clientY, target);
+        });
+
+        document.addEventListener('click', () => this._hideContextMenu());
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') this._hideContextMenu();
+        });
+    },
+
+    _showContextMenu(x, y, target) {
+        this._hideContextMenu();
+
+        const hasSelection = target.selectionStart !== target.selectionEnd;
+
+        const items = [
+            { label: '✂️ Couper', action: () => document.execCommand('cut'), enabled: hasSelection },
+            { label: '📋 Copier', action: () => document.execCommand('copy'), enabled: hasSelection },
+            { label: '📌 Coller', action: async () => {
+                try {
+                    const res = await API.get('/api/clipboard');
+                    if (res && res.text) {
+                        const start = target.selectionStart;
+                        const end = target.selectionEnd;
+                        const val = target.value;
+                        target.value = val.slice(0, start) + res.text + val.slice(end);
+                        target.selectionStart = target.selectionEnd = start + res.text.length;
+                        target.dispatchEvent(new Event('input', { bubbles: true }));
+                    }
+                } catch (_) {}
+            }, enabled: true },
+            { label: '🔘 Tout sélectionner', action: () => target.select(), enabled: true },
+        ];
+
+        const menu = this.create('div', { className: 'context-menu' },
+            items.map(item => this.create('div', {
+                className: `context-menu-item ${item.enabled ? '' : 'disabled'}`,
+                textContent: item.label,
+                onClick: (e) => {
+                    e.stopPropagation();
+                    if (!item.enabled) return;
+                    target.focus();
+                    item.action();
+                    this._hideContextMenu();
+                }
+            }))
+        );
+
+        document.body.appendChild(menu);
+
+        // Keep menu within viewport
+        const rect = menu.getBoundingClientRect();
+        if (x + rect.width > window.innerWidth) x = window.innerWidth - rect.width - 5;
+        if (y + rect.height > window.innerHeight) y = window.innerHeight - rect.height - 5;
+        menu.style.left = x + 'px';
+        menu.style.top = y + 'px';
+
+        this._contextMenu = menu;
+    },
+
+    _hideContextMenu() {
+        if (this._contextMenu) {
+            this._contextMenu.remove();
+            this._contextMenu = null;
+        }
     }
 };

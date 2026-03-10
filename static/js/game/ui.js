@@ -340,14 +340,17 @@ const GameUI = {
         const mediaDiv = DOM.create('div', { className: 'question-media' });
         const imgEl = DOM.create('img', { src });
         imgEl.addEventListener('load', () => {
-            const rect = container.getBoundingClientRect();
-            if (!rect.width || !rect.height) return;
-            // Reserve space for badge (~36px), text (~50px), gaps (~48px)
-            const reservedH = 140;
-            const availH = Math.max(rect.height - reservedH, 100);
-            const size = Media.computeImageSize(imgEl, rect.width, availH);
-            imgEl.style.width = size.width + 'px';
-            imgEl.style.height = size.height + 'px';
+            requestAnimationFrame(() => {
+                const rect = container.getBoundingClientRect();
+                const cW = rect.width || window.innerWidth;
+                const cH = rect.height || window.innerHeight;
+                const reservedH = 140;
+                const availH = Math.max(cH - reservedH, 100);
+                const size = Media.computeImageSize(imgEl, cW, availH);
+                imgEl.style.width = size.width + 'px';
+                imgEl.style.height = size.height + 'px';
+                imgEl.classList.add('sized');
+            });
         });
         mediaDiv.appendChild(imgEl);
         return mediaDiv;

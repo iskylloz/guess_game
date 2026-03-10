@@ -10,6 +10,9 @@ const App = {
     init() {
         window.addEventListener('hashchange', () => this.route());
 
+        // Right-click context menu for text inputs
+        DOM.initContextMenu();
+
         // Offline detection
         window.addEventListener('online', () => {
             document.body.classList.remove('offline');
