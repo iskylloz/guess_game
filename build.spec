@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec for Guess The Picture."""
+"""PyInstaller spec for Guess The Picture (onedir mode)."""
 
 block_cipher = None
 
@@ -37,12 +37,18 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
     name='GuessThePicture',
     icon='static/assets/icons/icon.ico',
     console=False,
     strip=False,
     upx=False,
+    exclude_binaries=True,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    name='GuessThePicture',
 )
