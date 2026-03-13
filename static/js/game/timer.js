@@ -17,10 +17,6 @@ class GameTimer {
         this.intervalId = setInterval(() => {
             this.remaining--;
             if (this.onTick) this.onTick(this.remaining, this.total);
-            // Tick sound for last 5 seconds
-            if (this.remaining > 0 && this.remaining <= 5) {
-                Media.playSFX('timer_tick');
-            }
             if (this.remaining <= 0) {
                 this.stop();
                 if (this.onEnd) this.onEnd();

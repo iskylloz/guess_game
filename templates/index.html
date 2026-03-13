@@ -12,34 +12,38 @@
     <link rel="stylesheet" href="/static/fonts/fredoka.css">
 </head>
 <body>
-    <div id="app"></div>
-
-    <!-- Third-party libs -->
-    <script src="/static/lib/wavesurfer.min.js"></script>
+    <div id="app">
+        <!-- Splash screen (replaced by JS on first route) -->
+        <div class="splash-screen">
+            <div class="splash-spinner"></div>
+            <div class="splash-text">Chargement...</div>
+        </div>
+    </div>
 
     <!-- App utilities -->
-    <script src="/static/js/utils/dom.js"></script>
-    <script src="/static/js/utils/api.js"></script>
-    <script src="/static/js/utils/media.js"></script>
+    <script defer src="/static/js/utils/dom.js"></script>
+    <script defer src="/static/js/utils/api.js"></script>
+    <script defer src="/static/js/utils/media.js"></script>
 
     <!-- App core -->
-    <script src="/static/js/app.js"></script>
-    <script src="/static/js/home.js"></script>
-    <script src="/static/js/settings.js"></script>
+    <script defer src="/static/js/app.js"></script>
+    <script defer src="/static/js/home.js"></script>
+    <script defer src="/static/js/settings.js"></script>
 
     <!-- Game -->
-    <script src="/static/js/game/setup.js"></script>
-    <script src="/static/js/game/engine.js"></script>
-    <script src="/static/js/game/ui.js"></script>
-    <script src="/static/js/game/timer.js"></script>
-    <script src="/static/js/game/end.js"></script>
+    <script defer src="/static/js/game/setup.js"></script>
+    <script defer src="/static/js/game/engine.js"></script>
+    <script defer src="/static/js/game/animations.js"></script>
+    <script defer src="/static/js/game/ui.js"></script>
+    <script defer src="/static/js/game/timer.js"></script>
+    <script defer src="/static/js/game/end.js"></script>
 
     <!-- Editor -->
-    <script src="/static/js/editor/create.js"></script>
-    <script src="/static/js/editor/manage.js"></script>
-    <script src="/static/js/editor/image-editor.js"></script>
-    <script src="/static/js/editor/audio-editor.js"></script>
-    <script src="/static/js/editor/preview.js"></script>
-    <script src="/static/js/editor/import-export.js"></script>
+    <script defer src="/static/js/editor/create.js"></script>
+    <script defer src="/static/js/editor/manage.js"></script>
+    <script defer src="/static/js/editor/image-editor.js"></script>
+    <script defer src="/static/js/editor/audio-editor.js"></script>
+    <script defer src="/static/js/editor/preview.js"></script>
+    <script defer src="/static/js/editor/import-export.js"></script>
 </body>
 </html>

@@ -19,9 +19,7 @@ const GameUI = {
         this.engine = new GameEngine(App.gameConfig);
         await this.engine.init();
 
-        // Preload SFX for instant playback
-        Media.preloadSFX();
-        Media.playSFX('game_start');
+        GameAnimations.sfxInfo();
 
         // Bind timer callbacks
         if (this.engine.timer) {
@@ -105,17 +103,16 @@ const GameUI = {
     },
 
     selectCategory(categoryId) {
-        Media.playSFX('click');
         const q = this.engine.getNextQuestion(categoryId);
         if (!q) {
             DOM.toast('Plus de questions dans cette catégorie !', 'warning');
             return;
         }
 
-        // If black override happened, show dramatic reveal
+        // If black override happened, flag for dramatic reveal animation
         if (this.engine.currentIsBlack && q.category === 'black' && categoryId !== 'black') {
-            Media.playSFX('black_reveal');
             DOM.toast('⚫ Question NOIRE ! Points x2 !', 'warning', 3000);
+            this._pendingBlackReveal = true;
         }
 
         this.renderQuestion();
@@ -183,6 +180,14 @@ const GameUI = {
         screen.appendChild(this.buildScoreBar());
 
         this.container.appendChild(screen);
+
+        // Black reveal animation (after DOM is in place)
+        if (this._pendingBlackReveal) {
+            this._pendingBlackReveal = false;
+            GameAnimations.blackReveal(qContainer);
+        } else if (this.engine.currentIsBlack) {
+            qContainer.classList.add('question-black');
+        }
     },
 
     // ===== ANSWER DISPLAY =====
@@ -237,6 +242,11 @@ const GameUI = {
             textContent: q.answer.text
         }));
 
+        // Apply black style on answer view
+        if (this.engine.currentIsBlack) {
+            aContainer.classList.add('question-black');
+        }
+
         screen.appendChild(aContainer);
 
         // Action buttons
@@ -273,37 +283,70 @@ const GameUI = {
 
     onValidate() {
         Media.stopChannel('questions');
-        Media.playSFX('correct');
-        this.engine.validate();
-        if (this.engine.isFinished) {
-            App.navigate('#/game/end');
-        } else if (this.engine.mode === 'random') {
-            const q = this.engine.getNextQuestion();
-            if (q) this.renderQuestion();
-            else App.navigate('#/game/end');
-        } else {
-            this.renderCategoryGrid();
+
+        const isBlack = this.engine.currentIsBlack;
+        const qContainer = this.container.querySelector('.question-container');
+
+        // Animations (flash triggers synthesized SFX)
+        if (qContainer) {
+            GameAnimations.flash(qContainer, isBlack ? 'correct-black' : 'correct');
+            GameAnimations.confetti(qContainer, isBlack
+                ? { count: 80, colors: ['#fbbf24', '#f59e0b', '#eab308', '#ffffff', '#fef3c7'], duration: 1500 }
+                : { count: 40, colors: ['#10b981', '#34d399', '#6ee7b7', '#fbbf24', '#ffffff'], duration: 1200 }
+            );
         }
+        GameAnimations.timerCriticalRemove(document.getElementById('game-timer'));
+
+        this.engine.validate();
+        this._animateScorePop();
+
+        // Delayed navigation to let animation play
+        setTimeout(() => {
+            if (this.engine.isFinished) {
+                App.navigate('#/game/end');
+            } else if (this.engine.mode === 'random') {
+                const q = this.engine.getNextQuestion();
+                if (q) this.renderQuestion();
+                else App.navigate('#/game/end');
+            } else {
+                this.renderCategoryGrid();
+            }
+        }, 1000);
     },
 
     onRefuse() {
         Media.stopChannel('questions');
-        Media.playSFX('wrong');
-        this.engine.refuse();
-        if (this.engine.isFinished) {
-            App.navigate('#/game/end');
-        } else if (this.engine.mode === 'random') {
-            const q = this.engine.getNextQuestion();
-            if (q) this.renderQuestion();
-            else App.navigate('#/game/end');
-        } else {
-            this.renderCategoryGrid();
+
+        const isBlack = this.engine.currentIsBlack;
+        const qContainer = this.container.querySelector('.question-container');
+
+        // Animations (flash triggers synthesized SFX)
+        if (qContainer) {
+            GameAnimations.flash(qContainer, isBlack ? 'wrong-black' : 'wrong');
+            GameAnimations.shake(qContainer, isBlack ? 'intense' : 'normal');
         }
+        GameAnimations.timerCriticalRemove(document.getElementById('game-timer'));
+
+        this.engine.refuse();
+
+        // Delayed navigation to let animation play
+        setTimeout(() => {
+            if (this.engine.isFinished) {
+                App.navigate('#/game/end');
+            } else if (this.engine.mode === 'random') {
+                const q = this.engine.getNextQuestion();
+                if (q) this.renderQuestion();
+                else App.navigate('#/game/end');
+            } else {
+                this.renderCategoryGrid();
+            }
+        }, 1000);
     },
 
     onCancel() {
         Media.stopChannel('questions');
-        Media.playSFX('cancel');
+        GameAnimations.sfxWarning();
+        GameAnimations.timerCriticalRemove(document.getElementById('game-timer'));
         this.engine.cancel();
         if (this.engine.mode === 'random') {
             const q = this.engine.getNextQuestion();
@@ -318,7 +361,7 @@ const GameUI = {
         // Per-question timer expired — show popup, user still decides outcome
         if (this.showingAnswer) return; // Already reviewing answer, ignore
 
-        Media.playSFX('timer_end');
+        GameAnimations.sfxError();
         DOM.hideAllModals();
         const modal = DOM.create('div', { className: 'modal confirm-dialog' }, [
             DOM.create('h3', { textContent: '⏱️ Temps écoulé !' }),
@@ -428,6 +471,22 @@ const GameUI = {
         if (timerEl && this.engine.timer) {
             timerEl.textContent = this.engine.timer.getFormattedTime();
             timerEl.className = `timer-display ${this.engine.timer.getColorClass()}`;
+
+            // Pulsing red border when ≤ 5 seconds
+            if (this.engine.timer.remaining <= 5) {
+                GameAnimations.timerCritical(timerEl);
+            }
+        }
+    },
+
+    _animateScorePop() {
+        if (this.engine.mode === 'random') {
+            const scoreEl = this.container.querySelector('.score-value');
+            if (scoreEl) GameAnimations.scorePop(scoreEl);
+        } else {
+            const widgets = this.container.querySelectorAll('.score-widget');
+            const activeWidget = widgets[this.engine.currentTeamIndex];
+            if (activeWidget) GameAnimations.scorePop(activeWidget);
         }
     },
 

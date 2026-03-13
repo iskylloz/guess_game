@@ -106,6 +106,14 @@ const DOM = {
 
     toast(message, type = 'info', duration = 3000, action = null) {
         const container = this._ensureToastContainer();
+
+        // Notification SFX
+        if (typeof GameAnimations !== 'undefined') {
+            const sfxMap = { success: 'sfxSuccess', error: 'sfxError', warning: 'sfxWarning', info: 'sfxInfo' };
+            const fn = sfxMap[type];
+            if (fn && GameAnimations[fn]) GameAnimations[fn]();
+        }
+
         const toast = this.create('div', {
             className: `toast toast-${type}`
         });

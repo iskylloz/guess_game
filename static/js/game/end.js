@@ -10,7 +10,6 @@ const GameEnd = {
         }
 
         DOM.clear(container);
-        Media.playSFX('game_end');
 
         const screen = DOM.create('div', { className: 'game-end' });
         const content = DOM.create('div', { className: 'game-end-content' });
@@ -51,6 +50,12 @@ const GameEnd = {
             }
             summary.appendChild(statsGrid);
             content.appendChild(summary);
+
+            // Score pop animation
+            const scoreValueEl = summary.querySelector('.random-end-score-value');
+            if (scoreValueEl) {
+                setTimeout(() => GameAnimations.scorePop(scoreValueEl), 300);
+            }
         } else {
             // Classic/Timer: competitive table
             const sortedTeams = engine.getSortedTeams();
@@ -98,6 +103,14 @@ const GameEnd = {
             }
             table.appendChild(tbody);
             content.appendChild(table);
+
+            // Winner celebration animation (after DOM is in place)
+            const firstRow = tbody.querySelector('tr');
+            if (firstRow) {
+                setTimeout(() => {
+                    GameAnimations.winnerCelebration(screen, firstRow);
+                }, 300);
+            }
         }
 
         // Cancelled questions

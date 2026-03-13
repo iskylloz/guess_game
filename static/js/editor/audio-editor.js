@@ -115,13 +115,24 @@ const AudioEditor = {
         }, 100);
     },
 
-    initWavesurfer(audioSrc) {
+    async initWavesurfer(audioSrc) {
         const container = document.getElementById('audio-editor-waveform');
         if (!container) return;
 
+        // Lazy-load WaveSurfer on first use
         if (typeof WaveSurfer === 'undefined') {
-            DOM.toast('WaveSurfer.js non chargé. Éditeur audio indisponible.', 'error');
-            return;
+            try {
+                await new Promise((resolve, reject) => {
+                    const s = document.createElement('script');
+                    s.src = '/static/lib/wavesurfer.min.js';
+                    s.onload = resolve;
+                    s.onerror = reject;
+                    document.head.appendChild(s);
+                });
+            } catch (_) {
+                DOM.toast('Impossible de charger WaveSurfer.js.', 'error');
+                return;
+            }
         }
 
         this.wavesurfer = WaveSurfer.create({

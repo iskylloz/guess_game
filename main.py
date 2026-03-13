@@ -85,7 +85,7 @@ if __name__ == '__main__':
             """Enter fullscreen using pywebview API for state consistency."""
             def delayed_fs():
                 import time
-                time.sleep(0.3)
+                time.sleep(0.1)
                 window.toggle_fullscreen()
             threading.Thread(target=delayed_fs, daemon=True).start()
 

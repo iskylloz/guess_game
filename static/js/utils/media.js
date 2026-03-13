@@ -43,49 +43,7 @@ const Media = {
         return iframe;
     },
 
-    // ===== SFX SYSTEM =====
-
-    /** Sound effect definitions: name → file path */
-    SFX_LIST: {
-        correct:      '/static/assets/sounds/correct.mp3',
-        wrong:        '/static/assets/sounds/wrong.mp3',
-        cancel:       '/static/assets/sounds/cancel.mp3',
-        click:        '/static/assets/sounds/click.mp3',
-        black_reveal: '/static/assets/sounds/black_reveal.mp3',
-        timer_tick:   '/static/assets/sounds/timer_tick.mp3',
-        timer_end:    '/static/assets/sounds/timer_end.mp3',
-        game_start:   '/static/assets/sounds/game_start.mp3',
-        game_end:     '/static/assets/sounds/game_end.mp3',
-    },
-
-    /** Preloaded Audio elements for instant playback */
-    _sfxCache: {},
-
-    /**
-     * Preload all SFX files into memory. Call once at game start.
-     * Missing files are silently ignored.
-     */
-    preloadSFX() {
-        for (const [name, src] of Object.entries(this.SFX_LIST)) {
-            if (this._sfxCache[name]) continue; // Already loaded
-            const audio = new Audio();
-            audio.preload = 'auto';
-            audio.src = src;
-            this._sfxCache[name] = audio;
-        }
-    },
-
-    /**
-     * Play a short SFX by name. Fire-and-forget, uses 'notifications' channel volume.
-     * Clones the cached audio so the same sound can overlap.
-     */
-    playSFX(name) {
-        const cached = this._sfxCache[name];
-        if (!cached) return;
-        const sfx = cached.cloneNode();
-        sfx.volume = this.getEffectiveVolume('notifications');
-        sfx.play().catch(() => {}); // Ignore errors (missing file, autoplay policy)
-    },
+    // SFX are handled by GameAnimations (Web Audio API synthesis)
 
     /**
      * Stop only audio elements on a specific channel.
@@ -123,7 +81,7 @@ const Media = {
             master,
             notifications: parseFloat(localStorage.getItem('vol_notifications') ?? '1'),
             questions:     parseFloat(localStorage.getItem('vol_questions')     ?? '1'),
-            ambiance:      parseFloat(localStorage.getItem('vol_ambiance')      ?? '1'),
+            animations:    parseFloat(localStorage.getItem('vol_animations')    ?? '1'),
         };
     })(),
 

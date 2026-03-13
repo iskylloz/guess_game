@@ -13,6 +13,35 @@ const App = {
         // Right-click context menu for text inputs
         DOM.initContextMenu();
 
+        // Global Escape keybind — opens/closes settings overlay from anywhere
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape') return;
+
+            const settings = App.pages.settings;
+
+            // If settings overlay is open and it's the only modal (top of stack), close it
+            if (settings._overlayOpen && DOM._modalStack.length === 1) {
+                settings.closeOverlay();
+                e.stopImmediatePropagation();
+                return;
+            }
+
+            // If any other modal is open, let the modal system handle ESC
+            if (DOM._modalStack.length > 0) return;
+
+            // No modals open — open settings overlay (unless already on settings page)
+            if (App.currentPageName === 'settings') return;
+            settings.openOverlay();
+            e.stopImmediatePropagation();
+        });
+
+        // Global UI click sound on buttons
+        document.addEventListener('click', (e) => {
+            if (e.target.closest('button, .btn')) {
+                GameAnimations.sfxClick();
+            }
+        });
+
         // Offline detection
         window.addEventListener('online', () => {
             document.body.classList.remove('offline');
@@ -70,8 +99,14 @@ const App = {
         const btn = DOM.create('button', {
             className: 'global-settings-btn',
             innerHTML: '⚙',
-            title: 'Paramètres',
-            onClick: () => App.navigate('#/settings')
+            title: 'Paramètres (Échap)',
+            onClick: () => {
+                if (App.pages.settings._overlayOpen) {
+                    App.pages.settings.closeOverlay();
+                } else {
+                    App.pages.settings.openOverlay();
+                }
+            }
         });
         document.body.appendChild(btn);
     },
@@ -91,11 +126,10 @@ const App = {
         const container = document.getElementById('app');
         DOM.clear(container);
 
-        // Hide settings button during active game play
+        // Hide settings button during active game play (keybind still works)
         const settingsBtn = document.querySelector('.global-settings-btn');
         if (settingsBtn) {
-            const hideOnPages = ['game'];
-            const isGamePlay = pageName === 'game' && params[0] === 'play';
+            const isGamePlay = pageName === 'game' && (params[0] === 'play' || params[0] === 'end');
             settingsBtn.style.display = isGamePlay ? 'none' : '';
         }
 

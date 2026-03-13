@@ -50,7 +50,7 @@ App.pages.home = {
             ]),
 
             // Footer
-            DOM.create('div', { className: 'home-footer', textContent: 'Guess the Picture v1.0' })
+            DOM.create('div', { className: 'home-footer', textContent: 'Guess the Picture v1.1' })
         ]);
 
         container.appendChild(screen);

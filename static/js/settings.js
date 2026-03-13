@@ -1,24 +1,14 @@
 /**
  * Settings Page — Application preferences.
  * Persists all settings to data/settings.json via API.
+ * Can render as a full page (#/settings) or as an overlay modal (Escape key).
  */
 App.pages.settings = {
     _settings: null,
+    _overlayOpen: false,
 
     async render(container) {
-        // Load settings from backend
-        try {
-            this._settings = await API.get('/api/settings');
-        } catch (e) {
-            this._settings = { fullscreen: true, volumes: { master: 1, notifications: 1, questions: 1, ambiance: 1 } };
-        }
-
-        // Sync volumes from backend to Media (in case they differ)
-        if (this._settings.volumes) {
-            for (const [ch, val] of Object.entries(this._settings.volumes)) {
-                Media.setVolume(val, ch);
-            }
-        }
+        await this._loadSettings();
 
         const page = DOM.create('div', { className: 'settings-page' }, [
             // Header
@@ -30,23 +20,73 @@ App.pages.settings = {
                 }),
                 DOM.create('h1', { textContent: 'Paramètres' })
             ]),
-
-            // Settings content
-            DOM.create('div', { className: 'settings-content' }, [
-                // Display section
-                DOM.create('div', { className: 'settings-section' }, [
-                    DOM.create('h2', { className: 'settings-section-title', textContent: 'Affichage' }),
-                    this._createFullscreenToggle()
-                ]),
-                // Audio section
-                DOM.create('div', { className: 'settings-section' }, [
-                    DOM.create('h2', { className: 'settings-section-title', textContent: 'Audio' }),
-                    ...this._createVolumeSliders()
-                ])
-            ])
+            this._buildContent()
         ]);
 
         container.appendChild(page);
+    },
+
+    /** Open settings as a modal overlay (usable from anywhere, including game). */
+    async openOverlay() {
+        if (this._overlayOpen) return;
+        this._overlayOpen = true;
+
+        await this._loadSettings();
+
+        const panel = DOM.create('div', { className: 'settings-overlay' }, [
+            DOM.create('div', { className: 'settings-overlay-header' }, [
+                DOM.create('h2', { textContent: 'Paramètres' }),
+                DOM.create('button', {
+                    className: 'btn btn-ghost btn-sm',
+                    textContent: '✕',
+                    onClick: () => this.closeOverlay()
+                })
+            ]),
+            this._buildContent()
+        ]);
+
+        const backdrop = DOM.showModal(panel);
+
+        // Override backdrop click to also reset our flag
+        backdrop.addEventListener('click', (e) => {
+            if (e.target === backdrop) this._overlayOpen = false;
+        });
+    },
+
+    closeOverlay() {
+        if (!this._overlayOpen) return;
+        this._overlayOpen = false;
+        DOM.hideModal();
+    },
+
+    async _loadSettings() {
+        try {
+            this._settings = await API.get('/api/settings');
+        } catch (e) {
+            this._settings = { fullscreen: true, volumes: { master: 1, notifications: 1, animations: 1, questions: 1, ambiance: 1 } };
+        }
+
+        // Sync volumes from backend to Media
+        if (this._settings.volumes) {
+            for (const [ch, val] of Object.entries(this._settings.volumes)) {
+                Media.setVolume(val, ch);
+            }
+        }
+    },
+
+    _buildContent() {
+        return DOM.create('div', { className: 'settings-content' }, [
+            // Display section
+            DOM.create('div', { className: 'settings-section' }, [
+                DOM.create('h2', { className: 'settings-section-title', textContent: 'Affichage' }),
+                this._createFullscreenToggle()
+            ]),
+            // Audio section
+            DOM.create('div', { className: 'settings-section' }, [
+                DOM.create('h2', { className: 'settings-section-title', textContent: 'Audio' }),
+                ...this._createVolumeSliders()
+            ])
+        ]);
     },
 
     async _saveSettings() {
@@ -93,8 +133,8 @@ App.pages.settings = {
     _volumeChannels: [
         { key: 'master',        icon: '🔊', label: 'Volume global',         desc: 'Volume principal de l\'application' },
         { key: 'notifications', icon: '🔔', label: 'Notifications',         desc: 'Validation, refus, compte à rebours…' },
+        { key: 'animations',    icon: '✨', label: 'Animations',            desc: 'Effets sonores des animations de jeu' },
         { key: 'questions',     icon: '🎵', label: 'Questions',             desc: 'Audio et vidéos des questions' },
-        { key: 'ambiance',      icon: '🎶', label: 'Ambiance',              desc: 'Musique de fond et effets d\'ambiance' },
     ],
 
     _createVolumeSliders() {
