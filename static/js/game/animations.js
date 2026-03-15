@@ -189,6 +189,104 @@ const GameAnimations = {
         osc.stop(now + 0.1);
     },
 
+    /** Alert chime at 10s remaining — two quick warning tones */
+    _sfxTimerWarning() {
+        const ctx = this._getAudioCtx();
+        const vol = Media.getEffectiveVolume('animations');
+        const now = ctx.currentTime;
+
+        const gain = ctx.createGain();
+        gain.connect(ctx.destination);
+        gain.gain.setValueAtTime(vol * 0.2, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+
+        // Two-tone alert: A5 → E5
+        [880, 659].forEach((freq, i) => {
+            const osc = ctx.createOscillator();
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(freq, now + i * 0.15);
+            osc.connect(gain);
+            osc.start(now + i * 0.15);
+            osc.stop(now + i * 0.15 + 0.12);
+        });
+    },
+
+    /** Tick sound from 10s→1s — pitch and volume rise as time runs out */
+    _sfxTimerTick(remaining) {
+        const ctx = this._getAudioCtx();
+        const vol = Media.getEffectiveVolume('animations');
+        const now = ctx.currentTime;
+
+        // Progress: 0 at 10s → 1 at 1s
+        const progress = (10 - Math.max(1, remaining)) / 9;
+        // Pitch rises: 500Hz at 10s → 1100Hz at 1s
+        const freq = 500 + progress * 600;
+        // Volume rises: soft at 10s → louder at 1s
+        const tickVol = vol * (0.08 + progress * 0.16);
+
+        const gain = ctx.createGain();
+        gain.connect(ctx.destination);
+        gain.gain.setValueAtTime(tickVol, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+
+        const osc = ctx.createOscillator();
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(freq, now);
+        osc.connect(gain);
+        osc.start(now);
+        osc.stop(now + 0.06);
+
+        // Double tick at ≤ 3s for extra tension
+        if (remaining <= 3) {
+            const g2 = ctx.createGain();
+            g2.connect(ctx.destination);
+            g2.gain.setValueAtTime(tickVol * 0.7, now + 0.12);
+            g2.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+            const o2 = ctx.createOscillator();
+            o2.type = 'square';
+            o2.frequency.setValueAtTime(freq * 1.2, now + 0.12);
+            o2.connect(g2);
+            o2.start(now + 0.12);
+            o2.stop(now + 0.18);
+        }
+    },
+
+    /** End-of-timer buzz — harsh low buzz signaling time's up */
+    _sfxTimerBuzz() {
+        const ctx = this._getAudioCtx();
+        const vol = Media.getEffectiveVolume('animations');
+        const now = ctx.currentTime;
+
+        // Main buzz: low sawtooth
+        const gain = ctx.createGain();
+        gain.connect(ctx.destination);
+        gain.gain.setValueAtTime(vol * 0.35, now);
+        gain.gain.setValueAtTime(vol * 0.35, now + 0.4);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.7);
+
+        const osc = ctx.createOscillator();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(110, now);
+        osc.frequency.linearRampToValueAtTime(80, now + 0.5);
+        osc.connect(gain);
+        osc.start(now);
+        osc.stop(now + 0.6);
+
+        // Harsh overtone
+        const g2 = ctx.createGain();
+        g2.connect(ctx.destination);
+        g2.gain.setValueAtTime(vol * 0.15, now);
+        g2.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+
+        const o2 = ctx.createOscillator();
+        o2.type = 'square';
+        o2.frequency.setValueAtTime(220, now);
+        o2.frequency.linearRampToValueAtTime(165, now + 0.4);
+        o2.connect(g2);
+        o2.start(now);
+        o2.stop(now + 0.45);
+    },
+
     _sfxWinner() {
         const ctx = this._getAudioCtx();
         const vol = Media.getEffectiveVolume('animations');
@@ -250,6 +348,120 @@ const GameAnimations = {
         osc.connect(gain);
         osc.start(now);
         osc.stop(now + 0.15);
+    },
+
+    // ===== BLACK TYPE SFX =====
+
+    _sfxBonus() {
+        const ctx = this._getAudioCtx();
+        const vol = Media.getEffectiveVolume('animations');
+        const now = ctx.currentTime;
+
+        // Magical chime: ascending sparkle arpegggio
+        const gain = ctx.createGain();
+        gain.connect(ctx.destination);
+        gain.gain.setValueAtTime(vol * 0.25, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
+
+        [523, 659, 784, 1047, 1319].forEach((freq, i) => {
+            const osc = ctx.createOscillator();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(freq, now);
+            osc.connect(gain);
+            osc.start(now + i * 0.1);
+            osc.stop(now + i * 0.1 + 0.3);
+        });
+
+        // Shimmer overlay
+        const shimGain = ctx.createGain();
+        shimGain.connect(ctx.destination);
+        shimGain.gain.setValueAtTime(vol * 0.1, now + 0.4);
+        shimGain.gain.exponentialRampToValueAtTime(0.001, now + 1.0);
+        [2093, 2637, 3136].forEach((freq, i) => {
+            const osc = ctx.createOscillator();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(freq, now + 0.4);
+            osc.connect(shimGain);
+            osc.start(now + 0.4 + i * 0.06);
+            osc.stop(now + 0.4 + i * 0.06 + 0.2);
+        });
+    },
+
+    _sfxMalus() {
+        const ctx = this._getAudioCtx();
+        const vol = Media.getEffectiveVolume('animations');
+        const now = ctx.currentTime;
+
+        // Ominous descending tones + distortion
+        const gain = ctx.createGain();
+        gain.connect(ctx.destination);
+        gain.gain.setValueAtTime(vol * 0.25, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 1.0);
+
+        [330, 277, 220, 165].forEach((freq, i) => {
+            const osc = ctx.createOscillator();
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(freq, now + i * 0.15);
+            osc.frequency.linearRampToValueAtTime(freq * 0.8, now + i * 0.15 + 0.3);
+            osc.connect(gain);
+            osc.start(now + i * 0.15);
+            osc.stop(now + i * 0.15 + 0.35);
+        });
+
+        // Sub bass rumble
+        const subGain = ctx.createGain();
+        subGain.connect(ctx.destination);
+        subGain.gain.setValueAtTime(vol * 0.2, now + 0.2);
+        subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.9);
+        const sub = ctx.createOscillator();
+        sub.type = 'sine';
+        sub.frequency.setValueAtTime(60, now + 0.2);
+        sub.frequency.linearRampToValueAtTime(40, now + 0.9);
+        sub.connect(subGain);
+        sub.start(now + 0.2);
+        sub.stop(now + 0.9);
+    },
+
+    _sfxHard() {
+        const ctx = this._getAudioCtx();
+        const vol = Media.getEffectiveVolume('animations');
+        const now = ctx.currentTime;
+
+        // Intense power-up: low rumble → rising sweep → impact
+        const gain = ctx.createGain();
+        gain.connect(ctx.destination);
+        gain.gain.setValueAtTime(0.001, now);
+        gain.gain.linearRampToValueAtTime(vol * 0.3, now + 0.4);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
+
+        const sweep = ctx.createOscillator();
+        sweep.type = 'sawtooth';
+        sweep.frequency.setValueAtTime(60, now);
+        sweep.frequency.exponentialRampToValueAtTime(500, now + 0.6);
+        sweep.connect(gain);
+        sweep.start(now);
+        sweep.stop(now + 0.8);
+
+        // Staccato hits
+        [0.3, 0.45, 0.6].forEach((t, i) => {
+            const hitGain = ctx.createGain();
+            hitGain.connect(ctx.destination);
+            hitGain.gain.setValueAtTime(vol * (0.2 + i * 0.1), now + t);
+            hitGain.gain.exponentialRampToValueAtTime(0.001, now + t + 0.15);
+            const hit = ctx.createOscillator();
+            hit.type = 'square';
+            hit.frequency.setValueAtTime(110 + i * 55, now + t);
+            hit.connect(hitGain);
+            hit.start(now + t);
+            hit.stop(now + t + 0.12);
+        });
+    },
+
+    /** Play the SFX matching a black question type */
+    sfxBlackType(type) {
+        if (type === 'bonus') this._sfxBonus();
+        else if (type === 'malus') this._sfxMalus();
+        else if (type === 'hard') this._sfxHard();
     },
 
     // ===== NOTIFICATION SFX =====
@@ -454,6 +666,15 @@ const GameAnimations = {
     timerCriticalRemove(el) {
         if (el) el.classList.remove('anim-timer-critical');
     },
+
+    /** Warning chime when timer hits 10s */
+    timerWarning() { this._sfxTimerWarning(); },
+
+    /** Accelerating tick for countdown ≤ 5s */
+    timerTick(remaining) { this._sfxTimerTick(remaining); },
+
+    /** Harsh buzz when timer reaches 0 */
+    timerBuzz() { this._sfxTimerBuzz(); },
 
     winnerCelebration(container, winnerRow) {
         winnerRow.classList.add('anim-winner-row');

@@ -96,14 +96,17 @@ def create_question():
     question_data = data.get('question', {})
     answer_data = data.get('answer', {})
 
+    black_type = data.get('black_type')
+    is_bonus_malus = category == 'black' and black_type in ('bonus', 'malus')
+
     if not question_data.get('text', '').strip():
         return jsonify({'error': 'Question text is required'}), 400
-    if not answer_data.get('text', '').strip():
+    if not is_bonus_malus and not answer_data.get('text', '').strip():
         return jsonify({'error': 'Answer text is required'}), 400
 
     try:
         manager = get_manager()
-        question = manager.create(category, question_data, answer_data)
+        question = manager.create(category, question_data, answer_data, black_type=black_type)
         return jsonify(question.to_dict()), 201
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
@@ -121,7 +124,8 @@ def update_question(question_id):
 
     try:
         manager = get_manager()
-        question = manager.update(question_id, category, question_data, answer_data)
+        black_type = data.get('black_type')
+        question = manager.update(question_id, category, question_data, answer_data, black_type=black_type)
         return jsonify(question.to_dict())
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
@@ -382,7 +386,8 @@ def import_questions():
                 manager.create(
                     q_data.get('category', 'blue'),
                     q_data.get('question', {}),
-                    q_data.get('answer', {})
+                    q_data.get('answer', {}),
+                    black_type=q_data.get('black_type')
                 )
                 added += 1
         result['added'] = added
@@ -396,7 +401,8 @@ def import_questions():
             manager.create(
                 q_data.get('category', 'blue'),
                 q_data.get('question', {}),
-                q_data.get('answer', {})
+                q_data.get('answer', {}),
+                black_type=q_data.get('black_type')
             )
         result['added'] = len(imported)
         result['total'] = manager.count()
@@ -415,7 +421,8 @@ def import_force():
         manager.create(
             q_data.get('category', 'blue'),
             q_data.get('question', {}),
-            q_data.get('answer', {})
+            q_data.get('answer', {}),
+            black_type=q_data.get('black_type')
         )
         added += 1
     return jsonify({'added': added, 'total': manager.count()})

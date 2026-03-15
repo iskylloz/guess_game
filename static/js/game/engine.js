@@ -164,10 +164,13 @@ class GameEngine {
                 this.getCurrentTeam().blackDrawn++;
             }
 
-            // Reset and start timer for each new question
-            if (this.timer) {
+            // Reset and start timer (skip for bonus/malus — no time pressure needed)
+            const isBonusMalus = this.currentIsBlack && question.black_type && question.black_type !== 'hard';
+            if (this.timer && !isBonusMalus) {
                 this.timer.reset();
                 this.timer.start();
+            } else if (this.timer && isBonusMalus) {
+                this.timer.stop();
             }
         }
 
@@ -220,6 +223,18 @@ class GameEngine {
         if (this.mode !== 'random') {
             this.advanceTeam();
         }
+
+        if (this.getTotalRemaining() === 0) {
+            this.endGame();
+        }
+    }
+
+    /**
+     * Skip black bonus/malus question — no points, same team replays.
+     */
+    skipBlack() {
+        this.currentQuestion = null;
+        // Team replays — don't advance
 
         if (this.getTotalRemaining() === 0) {
             this.endGame();

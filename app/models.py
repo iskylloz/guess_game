@@ -38,6 +38,7 @@ class Question:
     answer: MediaContent
     created_at: str = ''
     updated_at: str = ''
+    black_type: Optional[str] = None  # 'bonus', 'malus', 'hard' (only for black category)
 
     def __post_init__(self):
         now = datetime.now(timezone.utc).isoformat()
@@ -47,7 +48,7 @@ class Question:
             self.updated_at = now
 
     def to_dict(self):
-        return {
+        d = {
             'id': self.id,
             'category': self.category,
             'question': self.question.to_dict(),
@@ -55,6 +56,9 @@ class Question:
             'created_at': self.created_at,
             'updated_at': self.updated_at
         }
+        if self.black_type:
+            d['black_type'] = self.black_type
+        return d
 
     @classmethod
     def from_dict(cls, data):
@@ -64,7 +68,8 @@ class Question:
             question=MediaContent.from_dict(data.get('question', {})),
             answer=MediaContent.from_dict(data.get('answer', {})),
             created_at=data.get('created_at', ''),
-            updated_at=data.get('updated_at', '')
+            updated_at=data.get('updated_at', ''),
+            black_type=data.get('black_type')
         )
 
 

@@ -111,7 +111,11 @@ const GameUI = {
 
         // If black override happened, flag for dramatic reveal animation
         if (this.engine.currentIsBlack && q.category === 'black' && categoryId !== 'black') {
-            DOM.toast('⚫ Question NOIRE ! Points x2 !', 'warning', 3000);
+            const isBonusMalus = q.black_type && q.black_type !== 'hard';
+            const toastMsg = isBonusMalus
+                ? `⚫ Question NOIRE — ${q.black_type === 'bonus' ? '🎁 Bonus' : '💀 Malus'} !`
+                : '⚫ Question NOIRE ! Points x2 !';
+            DOM.toast(toastMsg, 'warning', 3000);
             this._pendingBlackReveal = true;
         }
 
@@ -138,9 +142,12 @@ const GameUI = {
         const qContainer = DOM.create('div', { className: 'question-container' });
 
         // Category badge
+        const blackTypeLabels = { bonus: '🎁 Bonus', malus: '💀 Malus', hard: '🔥 Difficile' };
+        const blackTypeLabel = q.black_type ? ` — ${blackTypeLabels[q.black_type] || ''}` : '';
+        const showPoints = this.engine.currentIsBlack && (!q.black_type || q.black_type === 'hard');
         qContainer.appendChild(DOM.create('span', {
             className: `badge badge-${q.category}`,
-            textContent: `${cat.emoji} ${cat.label}${this.engine.currentIsBlack ? ' ×2' : ''}`
+            textContent: `${cat.emoji} ${cat.label}${showPoints ? ' ×2' : ''}${blackTypeLabel}`
         }));
 
         // Media
@@ -167,13 +174,23 @@ const GameUI = {
 
         screen.appendChild(qContainer);
 
-        // Actions
+        // Actions — bonus/malus: skip answer, go to next directly
         const actions = DOM.create('div', { className: 'game-actions' });
-        actions.appendChild(DOM.create('button', {
-            className: 'btn btn-primary btn-lg',
-            textContent: '👁️ Voir la réponse',
-            onClick: () => this.renderAnswer()
-        }));
+        const isBonusMalus = this.engine.currentIsBlack && q.black_type && q.black_type !== 'hard';
+
+        if (isBonusMalus) {
+            actions.appendChild(DOM.create('button', {
+                className: 'btn btn-primary btn-lg',
+                textContent: '➡️ Question suivante',
+                onClick: () => this.onSkipBlack()
+            }));
+        } else {
+            actions.appendChild(DOM.create('button', {
+                className: 'btn btn-primary btn-lg',
+                textContent: '👁️ Voir la réponse',
+                onClick: () => this.renderAnswer()
+            }));
+        }
         screen.appendChild(actions);
 
         // Score bar
@@ -185,8 +202,16 @@ const GameUI = {
         if (this._pendingBlackReveal) {
             this._pendingBlackReveal = false;
             GameAnimations.blackReveal(qContainer);
+            // Play black type SFX after reveal animation
+            if (q.black_type) {
+                setTimeout(() => GameAnimations.sfxBlackType(q.black_type), 800);
+            }
         } else if (this.engine.currentIsBlack) {
             qContainer.classList.add('question-black');
+            // Play black type SFX immediately for direct black picks
+            if (q.black_type) {
+                GameAnimations.sfxBlackType(q.black_type);
+            }
         }
     },
 
@@ -215,9 +240,12 @@ const GameUI = {
         const aContainer = DOM.create('div', { className: 'question-container' });
 
         // Category badge
+        const blackTypeLabels = { bonus: '🎁 Bonus', malus: '💀 Malus', hard: '🔥 Difficile' };
+        const blackTypeLabel = q.black_type ? ` — ${blackTypeLabels[q.black_type] || ''}` : '';
+        const showPoints = this.engine.currentIsBlack && (!q.black_type || q.black_type === 'hard');
         aContainer.appendChild(DOM.create('span', {
             className: `badge badge-${q.category}`,
-            textContent: `${cat.emoji} ${cat.label}${this.engine.currentIsBlack ? ' ×2' : ''}`
+            textContent: `${cat.emoji} ${cat.label}${showPoints ? ' ×2' : ''}${blackTypeLabel}`
         }));
 
         // Answer media
@@ -249,28 +277,38 @@ const GameUI = {
 
         screen.appendChild(aContainer);
 
-        // Action buttons
+        // Action buttons — bonus/malus: single "next" button, no scoring
         const actions = DOM.create('div', { className: 'game-actions' });
-        actions.appendChild(DOM.create('button', {
-            className: 'btn btn-outline btn-lg',
-            textContent: '❓ Voir la question',
-            onClick: () => this.renderQuestion()
-        }));
-        actions.appendChild(DOM.create('button', {
-            className: 'btn btn-success btn-lg',
-            textContent: '✅ Valider',
-            onClick: () => this.onValidate()
-        }));
-        actions.appendChild(DOM.create('button', {
-            className: 'btn btn-danger btn-lg',
-            textContent: '❌ Refuser',
-            onClick: () => this.onRefuse()
-        }));
-        actions.appendChild(DOM.create('button', {
-            className: 'btn btn-outline btn-lg',
-            textContent: '🚫 Annuler',
-            onClick: () => this.onCancel()
-        }));
+        const isBonusMalus = this.engine.currentIsBlack && q.black_type && q.black_type !== 'hard';
+
+        if (isBonusMalus) {
+            actions.appendChild(DOM.create('button', {
+                className: 'btn btn-primary btn-lg',
+                textContent: '➡️ Question suivante',
+                onClick: () => this.onSkipBlack()
+            }));
+        } else {
+            actions.appendChild(DOM.create('button', {
+                className: 'btn btn-outline btn-lg',
+                textContent: '❓ Voir la question',
+                onClick: () => this.renderQuestion()
+            }));
+            actions.appendChild(DOM.create('button', {
+                className: 'btn btn-success btn-lg',
+                textContent: '✅ Valider',
+                onClick: () => this.onValidate()
+            }));
+            actions.appendChild(DOM.create('button', {
+                className: 'btn btn-danger btn-lg',
+                textContent: '❌ Refuser',
+                onClick: () => this.onRefuse()
+            }));
+            actions.appendChild(DOM.create('button', {
+                className: 'btn btn-outline btn-lg',
+                textContent: '🚫 Annuler',
+                onClick: () => this.onCancel()
+            }));
+        }
         screen.appendChild(actions);
 
         // Score bar
@@ -343,6 +381,23 @@ const GameUI = {
         }, 1000);
     },
 
+    onSkipBlack() {
+        Media.stopChannel('questions');
+        GameAnimations.sfxClick();
+        GameAnimations.timerCriticalRemove(document.getElementById('game-timer'));
+        this.engine.skipBlack();
+
+        if (this.engine.isFinished) {
+            App.navigate('#/game/end');
+        } else if (this.engine.mode === 'random') {
+            const q = this.engine.getNextQuestion();
+            if (q) this.renderQuestion();
+            else App.navigate('#/game/end');
+        } else {
+            this.renderCategoryGrid();
+        }
+    },
+
     onCancel() {
         Media.stopChannel('questions');
         GameAnimations.sfxWarning();
@@ -361,7 +416,8 @@ const GameUI = {
         // Per-question timer expired — show popup, user still decides outcome
         if (this.showingAnswer) return; // Already reviewing answer, ignore
 
-        GameAnimations.sfxError();
+        GameAnimations.timerBuzz();
+        GameAnimations.timerCriticalRemove(document.getElementById('game-timer'));
         DOM.hideAllModals();
         const modal = DOM.create('div', { className: 'modal confirm-dialog' }, [
             DOM.create('h3', { textContent: '⏱️ Temps écoulé !' }),
@@ -425,8 +481,10 @@ const GameUI = {
         // Right: current team + timer + end button
         const right = DOM.create('div', { className: 'game-header-right' });
 
-        // Show timer only during active question (not on category grid)
-        if (this.engine.timer && this.engine.currentQuestion) {
+        // Show timer only during active question (not on category grid, not for bonus/malus)
+        const q = this.engine.currentQuestion;
+        const _isBonusMalus = q && this.engine.currentIsBlack && q.black_type && q.black_type !== 'hard';
+        if (this.engine.timer && q && !_isBonusMalus) {
             const timerEl = DOM.create('div', {
                 className: `timer-display ${this.engine.timer.getColorClass()}`,
                 textContent: this.engine.timer.getFormattedTime(),
@@ -469,11 +527,17 @@ const GameUI = {
     updateTimerDisplay() {
         const timerEl = document.getElementById('game-timer');
         if (timerEl && this.engine.timer) {
+            const remaining = this.engine.timer.remaining;
             timerEl.textContent = this.engine.timer.getFormattedTime();
             timerEl.className = `timer-display ${this.engine.timer.getColorClass()}`;
 
+            // Ticks from 10s down to 1s (accelerating pitch)
+            if (remaining <= 10 && remaining >= 1) {
+                GameAnimations.timerTick(remaining);
+            }
+
             // Pulsing red border when ≤ 5 seconds
-            if (this.engine.timer.remaining <= 5) {
+            if (remaining <= 5) {
                 GameAnimations.timerCritical(timerEl);
             }
         }

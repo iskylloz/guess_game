@@ -1,6 +1,7 @@
 /**
- * Audio Editor — Waveform display, trim with draggable handles, fade, export.
+ * Audio Editor — Fullscreen game-style waveform editor with trim, fade, export.
  * Uses wavesurfer.js for visualization and Web Audio API for processing.
+ * In-place DOM updates with persistent element references (no screen recreation).
  */
 const AudioEditor = {
     wavesurfer: null,
@@ -11,6 +12,19 @@ const AudioEditor = {
     duration: 0,
     onSave: null,
     _dragTarget: null,
+
+    // Persistent DOM refs
+    _middle: null,
+    _sidebarEl: null,
+    _toolbarEl: null,
+    _waveformWrapper: null,
+    _overlayLeft: null,
+    _overlayRight: null,
+    _handleLeft: null,
+    _handleRight: null,
+    _trimStartVal: null,
+    _trimEndVal: null,
+    _trimDuration: null,
 
     settings: {
         channels: 'stereo',
@@ -34,89 +48,274 @@ const AudioEditor = {
                 this.audioBuffer = decoded;
                 this.duration = decoded.duration;
                 this.trimEnd = decoded.duration;
-                this.showModal(audioSrc);
+                this._buildScreen(audioSrc);
             })
             .catch(err => DOM.toast(`Erreur audio : ${err.message}`, 'error'));
     },
 
-    showModal(audioSrc) {
-        const modal = DOM.create('div', { className: 'modal audio-editor-modal' });
+    _buildScreen(audioSrc) {
+        const modal = DOM.create('div', { className: 'modal preview-fullscreen' });
+        const screen = DOM.create('div', { className: 'game-play' });
 
-        // Header
-        const header = DOM.create('div', { className: 'modal-header' });
-        header.appendChild(DOM.create('h3', { textContent: '✂️ Éditeur Audio' }));
-        header.appendChild(DOM.create('button', {
-            className: 'modal-close',
-            textContent: '×',
+        // Header (static)
+        const header = DOM.create('div', { className: 'game-header' });
+        const left = DOM.create('div', { className: 'game-header-left' });
+        left.appendChild(DOM.create('button', {
+            className: 'btn btn-ghost btn-sm',
+            textContent: '← Fermer',
             onClick: () => this.close()
         }));
-        modal.appendChild(header);
+        header.appendChild(left);
 
-        // Body
-        const body = DOM.create('div', { className: 'modal-body' });
+        const center = DOM.create('div', { className: 'game-header-center' });
+        center.textContent = 'Éditeur Audio';
+        header.appendChild(center);
 
-        // Waveform with trim overlay
-        const waveformWrapper = DOM.create('div', { className: 'waveform-wrapper', id: 'waveform-wrapper' });
-        const waveformDiv = DOM.create('div', { className: 'audio-editor-waveform', id: 'audio-editor-waveform' });
-        waveformWrapper.appendChild(waveformDiv);
-
-        // Trim overlay elements
-        const overlayLeft = DOM.create('div', { className: 'trim-overlay trim-overlay-left', id: 'trim-overlay-left' });
-        const overlayRight = DOM.create('div', { className: 'trim-overlay trim-overlay-right', id: 'trim-overlay-right' });
-        const handleLeft = DOM.create('div', { className: 'trim-handle trim-handle-left', id: 'trim-handle-left' });
-        handleLeft.appendChild(DOM.create('div', { className: 'trim-handle-line' }));
-        const handleRight = DOM.create('div', { className: 'trim-handle trim-handle-right', id: 'trim-handle-right' });
-        handleRight.appendChild(DOM.create('div', { className: 'trim-handle-line' }));
-
-        waveformWrapper.appendChild(overlayLeft);
-        waveformWrapper.appendChild(overlayRight);
-        waveformWrapper.appendChild(handleLeft);
-        waveformWrapper.appendChild(handleRight);
-        body.appendChild(waveformWrapper);
-
-        // Audio info
-        const info = DOM.create('div', { className: 'audio-info' });
-        info.appendChild(DOM.create('span', { textContent: `Durée: ${this.audioBuffer.duration.toFixed(1)}s` }));
-        const estSize = this.audioBuffer.length * this.audioBuffer.numberOfChannels * 2;
-        info.appendChild(DOM.create('span', { textContent: `Taille: ${(estSize / 1024 / 1024).toFixed(1)} MB` }));
-        body.appendChild(info);
-
-        // Trim controls (buttons + display)
-        body.appendChild(this.buildTrimControls());
-
-        // Playback controls
-        body.appendChild(this.buildPlaybackControls());
-
-        // Optimization (fade only)
-        body.appendChild(this.buildOptimizationPanel());
-
-        modal.appendChild(body);
-
-        // Footer
-        const footer = DOM.create('div', { className: 'modal-footer' });
-        footer.appendChild(DOM.create('button', {
-            className: 'btn btn-outline',
-            textContent: '❌ Annuler',
-            onClick: () => this.close()
-        }));
-        footer.appendChild(DOM.create('button', {
-            className: 'btn btn-success',
+        const right = DOM.create('div', { className: 'game-header-right' });
+        right.appendChild(DOM.create('button', {
+            className: 'btn btn-success btn-sm',
             textContent: '💾 Sauvegarder',
             onClick: () => this.save()
         }));
-        modal.appendChild(footer);
+        header.appendChild(right);
+        screen.appendChild(header);
 
+        // Middle area: sidebar overlaid on main content
+        this._middle = DOM.create('div', { className: 'ae-middle' });
+
+        // Sidebar (persistent ref)
+        this._sidebarEl = this.buildSidebar();
+        this._middle.appendChild(this._sidebarEl);
+
+        // Main content: waveform with trim overlays
+        const content = DOM.create('div', { className: 'ae-content' });
+
+        // Waveform wrapper
+        this._waveformWrapper = DOM.create('div', { className: 'waveform-wrapper' });
+        const waveformDiv = DOM.create('div', { className: 'audio-editor-waveform' });
+        this._waveformWrapper.appendChild(waveformDiv);
+
+        // Trim overlays & handles (persistent refs)
+        this._overlayLeft = DOM.create('div', { className: 'trim-overlay trim-overlay-left' });
+        this._overlayRight = DOM.create('div', { className: 'trim-overlay trim-overlay-right' });
+        this._handleLeft = DOM.create('div', { className: 'trim-handle trim-handle-left' });
+        this._handleLeft.appendChild(DOM.create('div', { className: 'trim-handle-line' }));
+        this._handleRight = DOM.create('div', { className: 'trim-handle trim-handle-right' });
+        this._handleRight.appendChild(DOM.create('div', { className: 'trim-handle-line' }));
+
+        this._waveformWrapper.appendChild(this._overlayLeft);
+        this._waveformWrapper.appendChild(this._overlayRight);
+        this._waveformWrapper.appendChild(this._handleLeft);
+        this._waveformWrapper.appendChild(this._handleRight);
+        content.appendChild(this._waveformWrapper);
+
+        this._middle.appendChild(content);
+        screen.appendChild(this._middle);
+
+        // Toolbar (persistent ref)
+        this._toolbarEl = this.buildToolbar();
+        screen.appendChild(this._toolbarEl);
+
+        modal.appendChild(screen);
         DOM.showModal(modal);
 
         // Init wavesurfer + drag handlers after DOM ready
         setTimeout(() => {
-            this.initWavesurfer(audioSrc);
+            this.initWavesurfer(audioSrc, waveformDiv);
             this.initDragHandles();
         }, 100);
     },
 
-    async initWavesurfer(audioSrc) {
-        const container = document.getElementById('audio-editor-waveform');
+    // ---- Sidebar ----
+
+    buildSidebar() {
+        const sidebar = DOM.create('div', { className: 'audio-editor-sidebar' });
+
+        // Playback controls
+        sidebar.appendChild(DOM.create('div', { className: 'ae-sidebar-title', textContent: '🔊 Lecture' }));
+
+        sidebar.appendChild(DOM.create('button', {
+            className: 'btn btn-outline btn-sm w-full',
+            textContent: '▶️ Lecture complète',
+            onClick: () => {
+                if (this.wavesurfer) { this.wavesurfer.seekTo(0); this.wavesurfer.play(); }
+            }
+        }));
+        sidebar.appendChild(DOM.create('button', {
+            className: 'btn btn-primary btn-sm w-full',
+            textContent: '🔊 Écouter sélection',
+            onClick: () => this.playSelection()
+        }));
+        sidebar.appendChild(DOM.create('button', {
+            className: 'btn btn-ghost btn-sm w-full',
+            textContent: '⏹️ Stop',
+            onClick: () => { if (this.wavesurfer) this.wavesurfer.pause(); }
+        }));
+
+        // Trim controls
+        sidebar.appendChild(DOM.create('hr', { style: { margin: '12px 0', opacity: '0.2' } }));
+        sidebar.appendChild(DOM.create('div', { className: 'ae-sidebar-title', textContent: '✂️ Découpage' }));
+
+        // Start trim
+        const startGroup = DOM.create('div', { className: 'ae-trim-group' });
+        startGroup.appendChild(DOM.create('span', { className: 'trim-label', textContent: 'Début:' }));
+        this._trimStartVal = DOM.create('span', {
+            className: 'trim-value',
+            textContent: DOM.formatTimeDecimal(this.trimStart)
+        });
+        startGroup.appendChild(this._trimStartVal);
+        const startBtns = DOM.create('div', { className: 'trim-buttons' });
+        for (const d of [-1, -0.1, 0.1, 1]) {
+            startBtns.appendChild(DOM.create('button', {
+                className: 'btn btn-sm btn-outline',
+                textContent: `${d > 0 ? '+' : ''}${d}s`,
+                onClick: () => this.adjustTrim('start', d)
+            }));
+        }
+        startGroup.appendChild(startBtns);
+        sidebar.appendChild(startGroup);
+
+        // End trim
+        const endGroup = DOM.create('div', { className: 'ae-trim-group' });
+        endGroup.appendChild(DOM.create('span', { className: 'trim-label', textContent: 'Fin:' }));
+        this._trimEndVal = DOM.create('span', {
+            className: 'trim-value',
+            textContent: DOM.formatTimeDecimal(this.trimEnd)
+        });
+        endGroup.appendChild(this._trimEndVal);
+        const endBtns = DOM.create('div', { className: 'trim-buttons' });
+        for (const d of [-1, -0.1, 0.1, 1]) {
+            endBtns.appendChild(DOM.create('button', {
+                className: 'btn btn-sm btn-outline',
+                textContent: `${d > 0 ? '+' : ''}${d}s`,
+                onClick: () => this.adjustTrim('end', d)
+            }));
+        }
+        endGroup.appendChild(endBtns);
+        sidebar.appendChild(endGroup);
+
+        // Duration display
+        const dur = Math.max(0, this.trimEnd - this.trimStart);
+        this._trimDuration = DOM.create('div', {
+            className: 'text-center text-muted text-sm',
+            textContent: `Sélection: ${dur.toFixed(1)}s`
+        });
+        if (dur > 30) {
+            this._trimDuration.style.color = 'var(--warning)';
+            this._trimDuration.textContent += ' ⚠️';
+        }
+        sidebar.appendChild(this._trimDuration);
+
+        // Fade controls
+        sidebar.appendChild(DOM.create('hr', { style: { margin: '12px 0', opacity: '0.2' } }));
+        sidebar.appendChild(DOM.create('div', { className: 'ae-sidebar-title', textContent: '🎵 Effets' }));
+
+        const fadeInGroup = DOM.create('div', { className: 'form-group' });
+        fadeInGroup.appendChild(DOM.create('label', { className: 'label', textContent: 'Fade In (s)' }));
+        const fadeInInput = DOM.create('input', {
+            className: 'input input-sm',
+            type: 'number',
+            min: '0', max: '5', step: '0.1',
+            value: this.settings.fadeIn.toString()
+        });
+        fadeInInput.addEventListener('input', (e) => { this.settings.fadeIn = parseFloat(e.target.value) || 0; });
+        fadeInGroup.appendChild(fadeInInput);
+        sidebar.appendChild(fadeInGroup);
+
+        const fadeOutGroup = DOM.create('div', { className: 'form-group' });
+        fadeOutGroup.appendChild(DOM.create('label', { className: 'label', textContent: 'Fade Out (s)' }));
+        const fadeOutInput = DOM.create('input', {
+            className: 'input input-sm',
+            type: 'number',
+            min: '0', max: '5', step: '0.1',
+            value: this.settings.fadeOut.toString()
+        });
+        fadeOutInput.addEventListener('input', (e) => { this.settings.fadeOut = parseFloat(e.target.value) || 0; });
+        fadeOutGroup.appendChild(fadeOutInput);
+        sidebar.appendChild(fadeOutGroup);
+
+        // Audio info
+        if (this.audioBuffer) {
+            sidebar.appendChild(DOM.create('hr', { style: { margin: '12px 0', opacity: '0.2' } }));
+            sidebar.appendChild(DOM.create('div', { className: 'ae-sidebar-title', textContent: 'ℹ️ Info' }));
+            sidebar.appendChild(DOM.create('div', {
+                className: 'text-muted text-sm',
+                textContent: `Durée: ${this.audioBuffer.duration.toFixed(1)}s`
+            }));
+            const estSize = this.audioBuffer.length * this.audioBuffer.numberOfChannels * 2;
+            sidebar.appendChild(DOM.create('div', {
+                className: 'text-muted text-sm',
+                textContent: `Taille: ${(estSize / 1024 / 1024).toFixed(1)} MB`
+            }));
+        }
+
+        return sidebar;
+    },
+
+    // ---- Toolbar ----
+
+    buildToolbar() {
+        const toolbar = DOM.create('div', { className: 'image-editor-toolbar' });
+
+        const playGroup = DOM.create('div', { className: 'tool-group' });
+        playGroup.appendChild(DOM.create('button', {
+            className: 'tool-btn',
+            textContent: '▶️ Lecture',
+            onClick: () => { if (this.wavesurfer) { this.wavesurfer.seekTo(0); this.wavesurfer.play(); } }
+        }));
+        playGroup.appendChild(DOM.create('button', {
+            className: 'tool-btn',
+            textContent: '🔊 Sélection',
+            onClick: () => this.playSelection()
+        }));
+        playGroup.appendChild(DOM.create('button', {
+            className: 'tool-btn',
+            textContent: '⏹️ Stop',
+            onClick: () => { if (this.wavesurfer) this.wavesurfer.pause(); }
+        }));
+        toolbar.appendChild(playGroup);
+
+        const trimGroup = DOM.create('div', { className: 'tool-group' });
+        trimGroup.appendChild(DOM.create('button', {
+            className: 'tool-btn',
+            textContent: '⏮️ Début ici',
+            onClick: () => {
+                if (this.wavesurfer) {
+                    this.trimStart = Math.round(this.wavesurfer.getCurrentTime() * 10) / 10;
+                    this.updateTrimDisplay();
+                    this.updateTrimOverlay();
+                }
+            }
+        }));
+        trimGroup.appendChild(DOM.create('button', {
+            className: 'tool-btn',
+            textContent: '⏭️ Fin ici',
+            onClick: () => {
+                if (this.wavesurfer) {
+                    this.trimEnd = Math.round(this.wavesurfer.getCurrentTime() * 10) / 10;
+                    this.updateTrimDisplay();
+                    this.updateTrimOverlay();
+                }
+            }
+        }));
+        trimGroup.appendChild(DOM.create('button', {
+            className: 'tool-btn',
+            textContent: '🔄 Réinitialiser',
+            onClick: () => {
+                this.trimStart = 0;
+                this.trimEnd = this.duration;
+                this.updateTrimDisplay();
+                this.updateTrimOverlay();
+            }
+        }));
+        toolbar.appendChild(trimGroup);
+
+        return toolbar;
+    },
+
+    // ---- WaveSurfer ----
+
+    async initWavesurfer(audioSrc, container) {
         if (!container) return;
 
         // Lazy-load WaveSurfer on first use
@@ -140,7 +339,7 @@ const AudioEditor = {
             waveColor: '#4F4A85',
             progressColor: '#6366f1',
             cursorColor: '#e2e8f0',
-            height: 128,
+            height: 180,
             barWidth: 2,
             barGap: 1,
             barRadius: 2,
@@ -158,9 +357,7 @@ const AudioEditor = {
     // ---- Draggable trim handles ----
 
     initDragHandles() {
-        const handleLeft = document.getElementById('trim-handle-left');
-        const handleRight = document.getElementById('trim-handle-right');
-        if (!handleLeft || !handleRight) return;
+        if (!this._handleLeft || !this._handleRight) return;
 
         const onMouseDown = (target) => (e) => {
             e.preventDefault();
@@ -170,11 +367,9 @@ const AudioEditor = {
         };
 
         const onMouseMove = (e) => {
-            if (!this._dragTarget) return;
-            const wrapper = document.getElementById('waveform-wrapper');
-            if (!wrapper) return;
+            if (!this._dragTarget || !this._waveformWrapper) return;
 
-            const rect = wrapper.getBoundingClientRect();
+            const rect = this._waveformWrapper.getBoundingClientRect();
             const x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
             const ratio = x / rect.width;
             const time = Math.round(ratio * this.duration * 10) / 10;
@@ -194,87 +389,24 @@ const AudioEditor = {
             document.removeEventListener('mouseup', onMouseUp);
         };
 
-        handleLeft.addEventListener('mousedown', onMouseDown('left'));
-        handleRight.addEventListener('mousedown', onMouseDown('right'));
+        this._handleLeft.addEventListener('mousedown', onMouseDown('left'));
+        this._handleRight.addEventListener('mousedown', onMouseDown('right'));
     },
 
     updateTrimOverlay() {
-        const wrapper = document.getElementById('waveform-wrapper');
-        const overlayLeft = document.getElementById('trim-overlay-left');
-        const overlayRight = document.getElementById('trim-overlay-right');
-        const handleLeft = document.getElementById('trim-handle-left');
-        const handleRight = document.getElementById('trim-handle-right');
-        if (!wrapper || !overlayLeft || !overlayRight || !handleLeft || !handleRight) return;
+        if (!this._waveformWrapper || !this._overlayLeft) return;
 
         const dur = this.duration || 1;
         const leftPct = (this.trimStart / dur) * 100;
         const rightPct = (1 - this.trimEnd / dur) * 100;
 
-        overlayLeft.style.width = leftPct + '%';
-        overlayRight.style.width = rightPct + '%';
-        handleLeft.style.left = leftPct + '%';
-        handleRight.style.right = rightPct + '%';
+        this._overlayLeft.style.width = leftPct + '%';
+        this._overlayRight.style.width = rightPct + '%';
+        this._handleLeft.style.left = leftPct + '%';
+        this._handleRight.style.right = rightPct + '%';
     },
 
-    // ---- Trim controls (buttons + values) ----
-
-    buildTrimControls() {
-        const controls = DOM.create('div', { className: 'audio-editor-controls' });
-        const trimRow = DOM.create('div', { className: 'trim-controls' });
-
-        // Start
-        const startGroup = DOM.create('div', { className: 'trim-group' });
-        startGroup.appendChild(DOM.create('span', { className: 'trim-label', textContent: 'Début:' }));
-        startGroup.appendChild(DOM.create('span', {
-            className: 'trim-value', id: 'trim-start-val',
-            textContent: DOM.formatTimeDecimal(this.trimStart)
-        }));
-        const startBtns = DOM.create('div', { className: 'trim-buttons' });
-        for (const d of [-1, -0.1, 0.1, 1]) {
-            startBtns.appendChild(DOM.create('button', {
-                className: 'btn btn-sm btn-outline',
-                textContent: `${d > 0 ? '+' : ''}${d}s`,
-                onClick: () => this.adjustTrim('start', d)
-            }));
-        }
-        startGroup.appendChild(startBtns);
-        trimRow.appendChild(startGroup);
-
-        // End
-        const endGroup = DOM.create('div', { className: 'trim-group' });
-        endGroup.appendChild(DOM.create('span', { className: 'trim-label', textContent: 'Fin:' }));
-        endGroup.appendChild(DOM.create('span', {
-            className: 'trim-value', id: 'trim-end-val',
-            textContent: DOM.formatTimeDecimal(this.trimEnd)
-        }));
-        const endBtns = DOM.create('div', { className: 'trim-buttons' });
-        for (const d of [-1, -0.1, 0.1, 1]) {
-            endBtns.appendChild(DOM.create('button', {
-                className: 'btn btn-sm btn-outline',
-                textContent: `${d > 0 ? '+' : ''}${d}s`,
-                onClick: () => this.adjustTrim('end', d)
-            }));
-        }
-        endGroup.appendChild(endBtns);
-        trimRow.appendChild(endGroup);
-
-        controls.appendChild(trimRow);
-
-        // Duration display
-        const duration = Math.max(0, this.trimEnd - this.trimStart);
-        const durDisplay = DOM.create('div', {
-            className: 'text-center text-muted text-sm',
-            id: 'trim-duration',
-            textContent: `Durée sélectionnée: ${duration.toFixed(1)}s`
-        });
-        if (duration > 30) {
-            durDisplay.style.color = 'var(--warning)';
-            durDisplay.textContent += ' ⚠️ (> 30s)';
-        }
-        controls.appendChild(durDisplay);
-
-        return controls;
-    },
+    // ---- Trim adjustments ----
 
     adjustTrim(which, delta) {
         const maxDuration = this.duration || 999;
@@ -290,51 +422,17 @@ const AudioEditor = {
     },
 
     updateTrimDisplay() {
-        const startEl = document.getElementById('trim-start-val');
-        const endEl = document.getElementById('trim-end-val');
-        const durEl = document.getElementById('trim-duration');
-        if (startEl) startEl.textContent = DOM.formatTimeDecimal(this.trimStart);
-        if (endEl) endEl.textContent = DOM.formatTimeDecimal(this.trimEnd);
-        if (durEl) {
+        if (this._trimStartVal) this._trimStartVal.textContent = DOM.formatTimeDecimal(this.trimStart);
+        if (this._trimEndVal) this._trimEndVal.textContent = DOM.formatTimeDecimal(this.trimEnd);
+        if (this._trimDuration) {
             const dur = Math.max(0, this.trimEnd - this.trimStart);
-            durEl.textContent = `Durée sélectionnée: ${dur.toFixed(1)}s`;
-            durEl.style.color = dur > 30 ? 'var(--warning)' : '';
-            if (dur > 30) durEl.textContent += ' ⚠️ (> 30s)';
+            this._trimDuration.textContent = `Sélection: ${dur.toFixed(1)}s`;
+            this._trimDuration.style.color = dur > 30 ? 'var(--warning)' : '';
+            if (dur > 30) this._trimDuration.textContent += ' ⚠️';
         }
     },
 
     // ---- Playback ----
-
-    buildPlaybackControls() {
-        const controls = DOM.create('div', { className: 'audio-playback-controls' });
-
-        controls.appendChild(DOM.create('button', {
-            className: 'btn btn-outline',
-            textContent: '▶️ Lecture complète',
-            onClick: () => {
-                if (this.wavesurfer) {
-                    this.wavesurfer.seekTo(0);
-                    this.wavesurfer.play();
-                }
-            }
-        }));
-
-        controls.appendChild(DOM.create('button', {
-            className: 'btn btn-primary',
-            textContent: '🔊 Écouter sélection',
-            onClick: () => this.playSelection()
-        }));
-
-        controls.appendChild(DOM.create('button', {
-            className: 'btn btn-ghost',
-            textContent: '⏹️ Stop',
-            onClick: () => {
-                if (this.wavesurfer) this.wavesurfer.pause();
-            }
-        }));
-
-        return controls;
-    },
 
     playSelection() {
         if (this.wavesurfer) {
@@ -350,42 +448,6 @@ const AudioEditor = {
                 }, 50);
             }
         }
-    },
-
-    // ---- Optimization (fade only) ----
-
-    buildOptimizationPanel() {
-        const panel = DOM.create('div', { className: 'optimization-panel' });
-
-        // Fade In
-        const fadeInGroup = DOM.create('div', { className: 'form-group' });
-        fadeInGroup.appendChild(DOM.create('label', { className: 'label', textContent: 'Fade In (secondes)' }));
-        const fadeInInput = DOM.create('input', {
-            className: 'input',
-            type: 'number',
-            min: '0', max: '5', step: '0.1',
-            value: this.settings.fadeIn.toString(),
-            style: { width: '100px' }
-        });
-        fadeInInput.addEventListener('input', (e) => { this.settings.fadeIn = parseFloat(e.target.value) || 0; });
-        fadeInGroup.appendChild(fadeInInput);
-        panel.appendChild(fadeInGroup);
-
-        // Fade Out
-        const fadeOutGroup = DOM.create('div', { className: 'form-group' });
-        fadeOutGroup.appendChild(DOM.create('label', { className: 'label', textContent: 'Fade Out (secondes)' }));
-        const fadeOutInput = DOM.create('input', {
-            className: 'input',
-            type: 'number',
-            min: '0', max: '5', step: '0.1',
-            value: this.settings.fadeOut.toString(),
-            style: { width: '100px' }
-        });
-        fadeOutInput.addEventListener('input', (e) => { this.settings.fadeOut = parseFloat(e.target.value) || 0; });
-        fadeOutGroup.appendChild(fadeOutInput);
-        panel.appendChild(fadeOutGroup);
-
-        return panel;
     },
 
     // ---- Audio processing ----
@@ -498,6 +560,17 @@ const AudioEditor = {
             this.wavesurfer = null;
         }
         this._dragTarget = null;
+        this._middle = null;
+        this._sidebarEl = null;
+        this._toolbarEl = null;
+        this._waveformWrapper = null;
+        this._overlayLeft = null;
+        this._overlayRight = null;
+        this._handleLeft = null;
+        this._handleRight = null;
+        this._trimStartVal = null;
+        this._trimEndVal = null;
+        this._trimDuration = null;
         DOM.hideModal();
     }
 };

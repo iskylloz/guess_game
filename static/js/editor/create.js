@@ -4,6 +4,7 @@
 const EditorCreate = {
     state: {
         category: '',
+        black_type: null,  // 'bonus', 'malus', 'hard' (only for black)
         question: { text: '', image: null, audio: null, youtube: '' },
         answer: { text: '', image: null, audio: null, youtube: '' },
         editingId: null  // null = creating, string = editing existing
@@ -15,10 +16,18 @@ const EditorCreate = {
         // Category selector
         form.appendChild(this.buildCategorySelector());
 
-        // Two-column layout: Question | Answer
+        // Black type selector (only visible when black is selected)
+        if (this.state.category === 'black') {
+            form.appendChild(this.buildBlackTypeSelector());
+        }
+
+        // Two-column layout: Question | Answer (answer hidden for bonus/malus)
+        const isBonusMalus = this.state.category === 'black' && this.state.black_type && this.state.black_type !== 'hard';
         const columns = DOM.create('div', { className: 'create-columns' });
         columns.appendChild(this.buildMediaSection('question', '❓ Question'));
-        columns.appendChild(this.buildMediaSection('answer', '✅ Réponse'));
+        if (!isBonusMalus) {
+            columns.appendChild(this.buildMediaSection('answer', '✅ Réponse'));
+        }
         form.appendChild(columns);
 
         // Actions
@@ -62,6 +71,10 @@ const EditorCreate = {
                 },
                 onClick: () => {
                     this.state.category = cat.id;
+                    // Default to 'hard' when selecting black
+                    if (cat.id === 'black' && !this.state.black_type) {
+                        this.state.black_type = 'hard';
+                    }
                     this.refresh();
                 }
             }, [
@@ -76,6 +89,40 @@ const EditorCreate = {
                     style: { backgroundColor: isDark ? cat.color : checkColor, color: isDark ? 'white' : 'white' },
                     textContent: '✓'
                 })
+            ]);
+            grid.appendChild(btn);
+        }
+
+        section.appendChild(grid);
+        return section;
+    },
+
+    buildBlackTypeSelector() {
+        const section = DOM.create('div', { className: 'black-type-selector' });
+
+        const types = [
+            { id: 'bonus', emoji: '🎁', label: 'Bonus', desc: 'Récompense spéciale' },
+            { id: 'malus', emoji: '💀', label: 'Malus', desc: 'Pénalité en cas d\'échec' },
+            { id: 'hard',  emoji: '🔥', label: 'Difficile', desc: 'Question très difficile' }
+        ];
+
+        const grid = DOM.create('div', { className: 'black-type-grid' });
+        for (const t of types) {
+            const isSelected = this.state.black_type === t.id;
+            const btn = DOM.create('button', {
+                className: `black-type-btn ${isSelected ? 'active' : ''}`,
+                onClick: () => {
+                    this.state.black_type = isSelected ? 'hard' : t.id;
+                    // Clear answer data when switching to bonus/malus
+                    if (this.state.black_type !== 'hard') {
+                        this.state.answer = { text: '', image: null, audio: null, youtube: '' };
+                    }
+                    this.refresh();
+                }
+            }, [
+                DOM.create('span', { className: 'black-type-emoji', textContent: t.emoji }),
+                DOM.create('span', { className: 'black-type-label', textContent: t.label }),
+                DOM.create('span', { className: 'black-type-desc', textContent: t.desc })
             ]);
             grid.appendChild(btn);
         }
@@ -109,7 +156,7 @@ const EditorCreate = {
         if (data.image) {
             imgGroup.appendChild(Media.createImagePreview(
                 `/media/${data.image}`,
-                () => ImageEditor.open(`/media/${data.image}`, (newPath) => { data.image = newPath; this.refresh(); }),
+                () => ImageEditor.open(`/media/${data.image}`, (newPath) => { data.image = newPath; this.refresh(); }, { text: data.text, category: this.state.category }),
                 () => { data.image = null; this.refresh(); }
             ));
         } else {
@@ -310,6 +357,7 @@ const EditorCreate = {
         const s = this.state;
 
         // Validation
+        const isBonusMalus = s.category === 'black' && s.black_type && s.black_type !== 'hard';
         if (!s.category) {
             DOM.toast('Sélectionnez une catégorie.', 'warning');
             return;
@@ -318,7 +366,7 @@ const EditorCreate = {
             DOM.toast('Le texte de la question est requis.', 'warning');
             return;
         }
-        if (!s.answer.text.trim()) {
+        if (!isBonusMalus && !s.answer.text.trim()) {
             DOM.toast('Le texte de la réponse est requis.', 'warning');
             return;
         }
@@ -338,19 +386,24 @@ const EditorCreate = {
                 youtube: s.answer.youtube || null
             }
         };
+        if (s.category === 'black' && s.black_type) {
+            data.black_type = s.black_type;
+        }
 
         try {
             if (s.editingId) {
                 await API.put(`/api/questions/${s.editingId}`, data);
                 DOM.toast('Question mise à jour !', 'success');
             } else {
-                // Check duplicates first
-                const dupResult = await API.post('/api/questions/check-duplicate', {
-                    answer_text: s.answer.text
-                });
-                if (dupResult.similar && dupResult.similar.length > 0) {
-                    const proceed = await this.showDuplicateModal(dupResult.similar);
-                    if (!proceed) return;
+                // Check duplicates first (skip for bonus/malus — no answer text)
+                if (!isBonusMalus && s.answer.text.trim()) {
+                    const dupResult = await API.post('/api/questions/check-duplicate', {
+                        answer_text: s.answer.text
+                    });
+                    if (dupResult.similar && dupResult.similar.length > 0) {
+                        const proceed = await this.showDuplicateModal(dupResult.similar);
+                        if (!proceed) return;
+                    }
                 }
 
                 await API.post('/api/questions', data);
@@ -419,6 +472,7 @@ const EditorCreate = {
 
         Preview.show({
             category: s.category || 'blue',
+            black_type: s.category === 'black' ? s.black_type : null,
             question: { ...s.question },
             answer: { ...s.answer }
         });
@@ -427,6 +481,7 @@ const EditorCreate = {
     clear() {
         this.state = {
             category: '',
+            black_type: null,
             question: { text: '', image: null, audio: null, youtube: '' },
             answer: { text: '', image: null, audio: null, youtube: '' },
             editingId: null
@@ -437,6 +492,7 @@ const EditorCreate = {
     loadForEdit(question) {
         this.state = {
             category: question.category,
+            black_type: question.black_type || null,
             question: {
                 text: question.question.text,
                 image: question.question.image,

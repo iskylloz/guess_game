@@ -25,8 +25,9 @@ const ImageEditor = {
         contrast: 100
     },
 
-    open(imageSrc, onSave) {
+    open(imageSrc, onSave, context) {
         this.onSave = onSave;
+        this._context = context || {};
         this.undoStack = [];
         this.currentTool = 'draw';
         this.isDrawing = false;
@@ -83,51 +84,76 @@ const ImageEditor = {
     },
 
     showModal() {
-        const modal = DOM.create('div', { className: 'modal image-editor-modal' });
+        const modal = DOM.create('div', { className: 'modal preview-fullscreen' });
+        const screen = DOM.create('div', { className: 'game-play' });
 
-        // Header
-        const header = DOM.create('div', { className: 'modal-header' });
-        header.appendChild(DOM.create('h3', { textContent: '✏️ Éditeur d\'image' }));
-        header.appendChild(DOM.create('button', {
-            className: 'modal-close',
-            textContent: '×',
+        // Header (game-style — static, never changes)
+        const header = DOM.create('div', { className: 'game-header' });
+        const left = DOM.create('div', { className: 'game-header-left' });
+        left.appendChild(DOM.create('button', {
+            className: 'btn btn-ghost btn-sm',
+            textContent: '← Fermer',
             onClick: () => DOM.hideModal()
         }));
-        modal.appendChild(header);
+        header.appendChild(left);
 
-        // Toolbar
-        modal.appendChild(this.buildToolbar());
+        const center = DOM.create('div', { className: 'game-header-center' });
+        center.textContent = 'Éditeur d\'image';
+        header.appendChild(center);
 
-        // Body: sidebar + canvas
-        const body = DOM.create('div', { className: 'image-editor-body' });
-        body.appendChild(this.buildSidebar());
+        const right = DOM.create('div', { className: 'game-header-right' });
+        right.appendChild(DOM.create('button', {
+            className: 'btn btn-success btn-sm',
+            textContent: '💾 Sauvegarder',
+            onClick: () => this.save()
+        }));
+        header.appendChild(right);
+        screen.appendChild(header);
 
-        const canvasArea = DOM.create('div', { className: 'image-editor-canvas-area' });
+        // Middle area: sidebar overlaid on question container
+        this._middle = DOM.create('div', { className: 'ie-middle' });
+
+        // Sidebar (persistent reference for in-place updates)
+        this._sidebarEl = this.buildSidebar();
+        this._middle.appendChild(this._sidebarEl);
+
+        // Question container with canvas + text (like game view)
+        const qContainer = DOM.create('div', { className: 'question-container' });
+
+        // Category badge
+        const cat = this._context.category ? Media.getCategoryById(this._context.category) : null;
+        if (cat) {
+            qContainer.appendChild(DOM.create('span', {
+                className: `badge badge-${this._context.category}`,
+                textContent: `${cat.emoji} ${cat.label}`
+            }));
+        }
+
+        // Canvas
         const canvasWrapper = DOM.create('div', { className: 'canvas-wrapper' });
         canvasWrapper.appendChild(this.canvas);
         this._selectionOverlay = DOM.create('div', { className: 'selection-overlay' });
         this._selectionOverlay.style.display = 'none';
         canvasWrapper.appendChild(this._selectionOverlay);
-        canvasArea.appendChild(canvasWrapper);
+        qContainer.appendChild(canvasWrapper);
         this.setupCanvasEvents(this.canvas);
-        body.appendChild(canvasArea);
 
-        modal.appendChild(body);
+        // Question text (if available)
+        if (this._context.text) {
+            qContainer.appendChild(DOM.create('div', {
+                className: 'question-text',
+                textContent: this._context.text
+            }));
+        }
 
-        // Footer
-        const footer = DOM.create('div', { className: 'image-editor-footer' });
-        footer.appendChild(DOM.create('button', {
-            className: 'btn btn-outline',
-            textContent: '❌ Annuler',
-            onClick: () => DOM.hideModal()
-        }));
-        footer.appendChild(DOM.create('button', {
-            className: 'btn btn-success',
-            textContent: '💾 Sauvegarder',
-            onClick: () => this.save()
-        }));
-        modal.appendChild(footer);
+        this._middle.appendChild(qContainer);
+        screen.appendChild(this._middle);
 
+        // Toolbar (persistent reference for in-place updates)
+        this._toolbarEl = this.buildToolbar();
+        screen.appendChild(this._toolbarEl);
+
+        modal.appendChild(screen);
         DOM.showModal(modal);
     },
 
@@ -146,7 +172,7 @@ const ImageEditor = {
             toolGroup.appendChild(DOM.create('button', {
                 className: `tool-btn ${this.currentTool === tool.id ? 'active' : ''}`,
                 textContent: tool.label,
-                onClick: () => { this.currentTool = tool.id; this.refreshToolbar(toolbar); }
+                onClick: () => { this.currentTool = tool.id; this.refreshToolbar(); }
             }));
         }
         toolbar.appendChild(toolGroup);
@@ -189,17 +215,19 @@ const ImageEditor = {
         return toolbar;
     },
 
-    refreshToolbar(toolbar) {
-        const parent = toolbar.parentElement;
+    refreshToolbar() {
+        // In-place update of toolbar
         const newToolbar = this.buildToolbar();
-        parent.replaceChild(newToolbar, toolbar);
+        this._toolbarEl.parentElement.replaceChild(newToolbar, this._toolbarEl);
+        this._toolbarEl = newToolbar;
 
-        // Refresh sidebar too
-        const sidebar = parent.querySelector('.image-editor-sidebar');
-        if (sidebar) {
-            const newSidebar = this.buildSidebar();
-            sidebar.parentElement.replaceChild(newSidebar, sidebar);
-        }
+        // In-place update of sidebar
+        const newSidebar = this.buildSidebar();
+        this._sidebarEl.parentElement.replaceChild(newSidebar, this._sidebarEl);
+        this._sidebarEl = newSidebar;
+
+        // Update canvas cursor
+        this.canvas.style.cursor = this.currentTool === 'draw' ? 'crosshair' : 'default';
     },
 
     buildSidebar() {
@@ -386,13 +414,10 @@ const ImageEditor = {
 
         if (this.currentTool === 'crop' && this.isSelecting) {
             this.isSelecting = false;
-            // Keep selection for "Apply crop" button
-            const sidebar = document.querySelector('.image-editor-sidebar');
-            if (sidebar) {
-                const parent = sidebar.parentElement;
-                const newSidebar = this.buildSidebar();
-                parent.replaceChild(newSidebar, sidebar);
-            }
+            // Keep selection — refresh sidebar to show "Apply crop" button
+            const newSidebar = this.buildSidebar();
+            this._sidebarEl.parentElement.replaceChild(newSidebar, this._sidebarEl);
+            this._sidebarEl = newSidebar;
         }
     },
 

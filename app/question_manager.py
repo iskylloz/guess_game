@@ -37,9 +37,15 @@ class QuestionManager:
                     answer_audio TEXT,
                     answer_youtube TEXT,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    black_type TEXT
                 )
             ''')
+            # Migration: add black_type column if missing
+            try:
+                conn.execute('ALTER TABLE questions ADD COLUMN black_type TEXT')
+            except Exception:
+                pass  # Column already exists
             conn.execute('''
                 CREATE INDEX IF NOT EXISTS idx_category ON questions(category)
             ''')
@@ -68,7 +74,8 @@ class QuestionManager:
                 youtube=row['answer_youtube']
             ),
             created_at=row['created_at'],
-            updated_at=row['updated_at']
+            updated_at=row['updated_at'],
+            black_type=row['black_type']
         )
 
     def load_all(self):
@@ -98,15 +105,16 @@ class QuestionManager:
         conn.execute('''
             INSERT OR REPLACE INTO questions
             (id, category, question_text, question_image, question_audio, question_youtube,
-             answer_text, answer_image, answer_audio, answer_youtube, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             answer_text, answer_image, answer_audio, answer_youtube, created_at, updated_at, black_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             question.id, question.category,
             question.question.text, question.question.image,
             question.question.audio, question.question.youtube,
             question.answer.text, question.answer.image,
             question.answer.audio, question.answer.youtube,
-            question.created_at, question.updated_at
+            question.created_at, question.updated_at,
+            question.black_type
         ))
 
     def get_by_id(self, question_id):
@@ -120,7 +128,7 @@ class QuestionManager:
         finally:
             conn.close()
 
-    def create(self, category, question_data, answer_data):
+    def create(self, category, question_data, answer_data, black_type=None):
         """Create a new question and return it."""
         if category not in VALID_CATEGORIES:
             raise ValueError(f'Invalid category: {category}')
@@ -139,7 +147,8 @@ class QuestionManager:
                 image=answer_data.get('image'),
                 audio=answer_data.get('audio'),
                 youtube=answer_data.get('youtube')
-            )
+            ),
+            black_type=black_type if category == 'black' else None
         )
 
         conn = self._get_conn()
@@ -151,7 +160,7 @@ class QuestionManager:
 
         return question
 
-    def update(self, question_id, category, question_data, answer_data):
+    def update(self, question_id, category, question_data, answer_data, black_type=None):
         """Update an existing question."""
         if category not in VALID_CATEGORIES:
             raise ValueError(f'Invalid category: {category}')
@@ -184,7 +193,7 @@ class QuestionManager:
                 UPDATE questions SET
                     category=?, question_text=?, question_image=?, question_audio=?,
                     question_youtube=?, answer_text=?, answer_image=?, answer_audio=?,
-                    answer_youtube=?, updated_at=?
+                    answer_youtube=?, updated_at=?, black_type=?
                 WHERE id=?
             ''', (
                 category,
@@ -197,6 +206,7 @@ class QuestionManager:
                 answer_data.get('audio'),
                 answer_data.get('youtube'),
                 now,
+                black_type if category == 'black' else None,
                 question_id
             ))
             conn.commit()

@@ -1,126 +1,185 @@
 /**
- * Preview — Full-screen modal that displays a question in game style.
+ * Preview — Full-screen game-identical view for testing questions.
+ * Validate/Refuse buttons trigger real animations and SFX.
+ * Uses in-place DOM updates for smooth transitions (no screen recreation).
  */
 const Preview = {
     showingAnswer: false,
+    _backdrop: null,
+    _qContainer: null,
+    _actions: null,
 
     show(questionData) {
         this.showingAnswer = false;
         this.questionData = questionData;
-        this.renderModal();
+        this._isBlack = questionData.category === 'black';
+        this._backdrop = null;
+        this._qContainer = null;
+        this._actions = null;
+        this._buildScreen();
     },
 
-    renderModal() {
+    /** Build the full screen structure once, then update content */
+    _buildScreen() {
         const q = this.questionData;
         const cat = Media.getCategoryById(q.category);
 
-        const modal = DOM.create('div', { className: 'modal preview-modal' });
+        const screen = DOM.create('div', { className: 'game-play' });
 
-        // Header
-        const header = DOM.create('div', { className: 'preview-header' });
-        header.appendChild(DOM.create('span', {
+        // Header (static — never changes)
+        const header = DOM.create('div', { className: 'game-header' });
+        const left = DOM.create('div', { className: 'game-header-left' });
+        left.appendChild(DOM.create('button', {
+            className: 'btn btn-ghost btn-sm',
+            textContent: '← Fermer',
+            onClick: () => DOM.hideModal()
+        }));
+        header.appendChild(left);
+
+        const center = DOM.create('div', { className: 'game-header-center' });
+        center.textContent = 'Prévisualisation';
+        header.appendChild(center);
+
+        const right = DOM.create('div', { className: 'game-header-right' });
+        right.appendChild(DOM.create('span', {
             className: `badge badge-${q.category}`,
             textContent: `${cat.emoji} ${cat.label}`
         }));
-        header.appendChild(DOM.create('span', {
-            className: 'text-muted',
-            textContent: 'Prévisualisation'
-        }));
-        header.appendChild(DOM.create('button', {
-            className: 'modal-close',
-            textContent: '×',
-            onClick: () => DOM.hideModal()
-        }));
-        modal.appendChild(header);
+        header.appendChild(right);
+        screen.appendChild(header);
 
-        // Body
-        const body = DOM.create('div', { className: 'preview-body' });
+        // Question container (content updated in-place)
+        this._qContainer = DOM.create('div', { className: 'question-container' });
+        if (this._isBlack) {
+            this._qContainer.classList.add('question-black');
+        }
+        screen.appendChild(this._qContainer);
+
+        // Actions bar (buttons updated in-place)
+        this._actions = DOM.create('div', { className: 'game-actions' });
+        screen.appendChild(this._actions);
+
+        // Bottom bar (static)
+        const bar = DOM.create('div', { className: 'score-bar' });
+        bar.appendChild(DOM.create('div', { className: 'score-item active' }, [
+            DOM.create('span', { className: 'score-name', textContent: 'Mode' }),
+            DOM.create('span', { className: 'score-value', textContent: 'Test' })
+        ]));
+        screen.appendChild(bar);
+
+        // Create modal
+        const modal = DOM.create('div', { className: 'modal preview-fullscreen' });
+        modal.appendChild(screen);
+        this._backdrop = DOM.showModal(modal);
+
+        // Fill content
+        this._updateContent();
+
+        // Play black type SFX on open
+        if (this._isBlack && q.black_type) {
+            GameAnimations.sfxBlackType(q.black_type);
+        }
+    },
+
+    /** Update only the question container and actions — no screen rebuild */
+    _updateContent() {
+        const q = this.questionData;
+        const cat = Media.getCategoryById(q.category);
         const data = this.showingAnswer ? q.answer : q.question;
+
+        // Update question container
+        DOM.clear(this._qContainer);
+
+        // Category badge
+        const blackTypeLabels = { bonus: '🎁 Bonus', malus: '💀 Malus', hard: '🔥 Difficile' };
+        const blackTypeLabel = q.black_type ? ` — ${blackTypeLabels[q.black_type] || ''}` : '';
+        this._qContainer.appendChild(DOM.create('span', {
+            className: `badge badge-${q.category}`,
+            textContent: `${cat.emoji} ${cat.label}${this._isBlack ? ' ×2' : ''}${blackTypeLabel}`
+        }));
 
         // Media
         if (data.image) {
-            const mediaDiv = DOM.create('div', { className: 'question-media' });
-            const imgEl = DOM.create('img', { src: `/media/${data.image}` });
-            imgEl.addEventListener('load', () => {
-                requestAnimationFrame(() => {
-                    const rect = body.getBoundingClientRect();
-                    const cW = rect.width || 600;
-                    const cH = rect.height || 400;
-                    const size = Media.computeImageSize(imgEl, cW, cH);
-                    imgEl.style.width = size.width + 'px';
-                    imgEl.style.height = size.height + 'px';
-                    imgEl.classList.add('sized');
-                });
-            });
-            mediaDiv.appendChild(imgEl);
-            body.appendChild(mediaDiv);
+            this._qContainer.appendChild(this._createAutoSizedImage(`/media/${data.image}`, this._qContainer));
         }
         if (data.audio) {
-            body.appendChild(Media.createAudioPlayer(`/media/${data.audio}`));
+            this._qContainer.appendChild(Media.createAudioPlayer(`/media/${data.audio}`));
         }
         if (data.youtube && navigator.onLine) {
             const videoId = Media.extractYouTubeId(data.youtube);
             if (videoId) {
                 const ytDiv = DOM.create('div', { className: 'game-youtube' });
                 ytDiv.appendChild(Media.createYouTubeEmbed(videoId));
-                body.appendChild(ytDiv);
+                this._qContainer.appendChild(ytDiv);
             }
         }
 
         // Text
-        body.appendChild(DOM.create('div', {
+        this._qContainer.appendChild(DOM.create('div', {
             className: this.showingAnswer ? 'answer-text' : 'question-text',
-            textContent: data.text || '(aucun texte)',
-            style: { fontSize: this.showingAnswer ? '1.8rem' : '2rem' }
+            textContent: data.text || '(aucun texte)'
         }));
 
-        modal.appendChild(body);
-
-        // Actions
-        const actions = DOM.create('div', { className: 'preview-actions' });
+        // Update actions
+        DOM.clear(this._actions);
 
         if (!this.showingAnswer) {
-            actions.appendChild(DOM.create('button', {
+            this._actions.appendChild(DOM.create('button', {
                 className: 'btn btn-primary btn-lg',
                 textContent: '👁️ Voir la réponse',
-                onClick: () => {
-                    this.showingAnswer = true;
-                    DOM.hideModal();
-                    this.renderModal();
-                }
+                onClick: () => { this.showingAnswer = true; this._updateContent(); }
             }));
         } else {
-            actions.appendChild(DOM.create('button', {
+            this._actions.appendChild(DOM.create('button', {
                 className: 'btn btn-outline btn-lg',
                 textContent: '❓ Voir la question',
-                onClick: () => {
-                    this.showingAnswer = false;
-                    DOM.hideModal();
-                    this.renderModal();
-                }
+                onClick: () => { this.showingAnswer = false; this._updateContent(); }
+            }));
+            this._actions.appendChild(DOM.create('button', {
+                className: 'btn btn-success btn-lg',
+                textContent: '✅ Valider',
+                onClick: () => this._onValidate()
+            }));
+            this._actions.appendChild(DOM.create('button', {
+                className: 'btn btn-danger btn-lg',
+                textContent: '❌ Refuser',
+                onClick: () => this._onRefuse()
             }));
         }
+    },
 
-        // Validate/Refuse disabled (preview only)
-        actions.appendChild(DOM.create('button', {
-            className: 'btn btn-success btn-lg',
-            textContent: '✅ Valider',
-            disabled: 'disabled'
-        }));
-        actions.appendChild(DOM.create('button', {
-            className: 'btn btn-danger btn-lg',
-            textContent: '❌ Refuser',
-            disabled: 'disabled'
-        }));
+    _onValidate() {
+        GameAnimations.flash(this._qContainer, this._isBlack ? 'correct-black' : 'correct');
+        GameAnimations.confetti(this._qContainer, this._isBlack
+            ? { count: 80, colors: ['#fbbf24', '#f59e0b', '#eab308', '#ffffff', '#fef3c7'], duration: 1500 }
+            : { count: 40, colors: ['#10b981', '#34d399', '#6ee7b7', '#fbbf24', '#ffffff'], duration: 1200 }
+        );
+        setTimeout(() => { this.showingAnswer = false; this._updateContent(); }, 1000);
+    },
 
-        actions.appendChild(DOM.create('button', {
-            className: 'btn btn-outline',
-            textContent: 'Fermer',
-            onClick: () => DOM.hideModal()
-        }));
+    _onRefuse() {
+        GameAnimations.flash(this._qContainer, this._isBlack ? 'wrong-black' : 'wrong');
+        GameAnimations.shake(this._qContainer, this._isBlack ? 'intense' : 'normal');
+        setTimeout(() => { this.showingAnswer = false; this._updateContent(); }, 1000);
+    },
 
-        modal.appendChild(actions);
-
-        DOM.showModal(modal);
+    _createAutoSizedImage(src, container) {
+        const mediaDiv = DOM.create('div', { className: 'question-media' });
+        const imgEl = DOM.create('img', { src });
+        imgEl.addEventListener('load', () => {
+            requestAnimationFrame(() => {
+                const rect = container.getBoundingClientRect();
+                const cW = rect.width || window.innerWidth;
+                const cH = rect.height || window.innerHeight;
+                const reservedH = 140;
+                const availH = Math.max(cH - reservedH, 100);
+                const size = Media.computeImageSize(imgEl, cW, availH);
+                imgEl.style.width = size.width + 'px';
+                imgEl.style.height = size.height + 'px';
+                imgEl.classList.add('sized');
+            });
+        });
+        mediaDiv.appendChild(imgEl);
+        return mediaDiv;
     }
 };
