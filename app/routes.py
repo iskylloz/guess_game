@@ -34,13 +34,27 @@ def index():
 
 @bp.route('/api/clipboard')
 def get_clipboard():
-    import subprocess
+    import ctypes
+    from ctypes import wintypes
     try:
-        result = subprocess.run(
-            ['powershell', '-command', 'Get-Clipboard'],
-            capture_output=True, text=True, timeout=2
-        )
-        return jsonify({'text': result.stdout.rstrip('\r\n')})
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        CF_UNICODETEXT = 13
+        if not user32.OpenClipboard(None):
+            return jsonify({'text': ''})
+        try:
+            handle = user32.GetClipboardData(CF_UNICODETEXT)
+            if not handle:
+                return jsonify({'text': ''})
+            kernel32.GlobalLock.restype = ctypes.c_void_p
+            ptr = kernel32.GlobalLock(handle)
+            if not ptr:
+                return jsonify({'text': ''})
+            text = ctypes.wstring_at(ptr)
+            kernel32.GlobalUnlock(handle)
+            return jsonify({'text': text})
+        finally:
+            user32.CloseClipboard()
     except Exception:
         return jsonify({'text': ''})
 
