@@ -1,7 +1,9 @@
 import os
 import io
 import json
+import uuid
 import zipfile
+import threading
 import urllib.request
 from flask import (
     Blueprint, render_template, request, jsonify,
@@ -12,6 +14,9 @@ from app.utils import (
     generate_id, allowed_file, get_file_extension,
     ALLOWED_IMAGE_EXTENSIONS, ALLOWED_AUDIO_EXTENSIONS
 )
+
+# In-memory import job store (desktop app, single user)
+_import_jobs = {}
 
 bp = Blueprint('main', __name__)
 
@@ -303,69 +308,146 @@ def export_questions():
     return jsonify({'ok': True, 'path': save_path})
 
 
-@bp.route('/api/import', methods=['POST'])
-def import_questions():
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file provided'}), 400
+@bp.route('/api/import/pick', methods=['POST'])
+def import_pick():
+    """Open native file dialog and return chosen file path (no upload)."""
+    import webview
+    window = webview.windows[0] if webview.windows else None
+    if not window:
+        return jsonify({'error': 'No window available'}), 500
 
-    file = request.files['file']
-    mode = request.form.get('mode', 'full_merge')
-    manager = get_manager()
+    result = window.create_file_dialog(
+        webview.OPEN_DIALOG,
+        file_types=('ZIP Files (*.zip)', 'JSON Files (*.json)')
+    )
+    if not result:
+        return jsonify({'cancelled': True})
+
+    path = result[0] if isinstance(result, (list, tuple)) else result
+    size = os.path.getsize(path)
+    return jsonify({'path': path, 'size': size, 'name': os.path.basename(path)})
+
+
+@bp.route('/api/import/start', methods=['POST'])
+def import_start():
+    """Start background import from a local file path. Returns job_id for polling."""
+    data = request.get_json()
+    file_path = data.get('path', '')
+    mode = data.get('mode', 'full_merge')
+
+    if not file_path or not os.path.exists(file_path):
+        return jsonify({'error': 'Fichier introuvable'}), 400
+
+    job_id = str(uuid.uuid4())[:8]
+    _import_jobs[job_id] = {
+        'status': 'running',
+        'step': 'Initialisation…',
+        'progress': 0,
+        'processed': 0,
+        'total': 0,
+        'result': None,
+        'error': None,
+    }
+
+    # Capture config values before entering thread (no app context in thread)
     media_path = current_app.config['MEDIA_PATH']
+    db_path = current_app.config['DB_PATH']
 
+    def run():
+        try:
+            _do_import(job_id, file_path, mode, media_path, db_path)
+        except Exception as e:
+            _import_jobs[job_id]['status'] = 'error'
+            _import_jobs[job_id]['error'] = str(e)
+
+    threading.Thread(target=run, daemon=True).start()
+    return jsonify({'job_id': job_id})
+
+
+@bp.route('/api/import/progress/<job_id>')
+def import_progress(job_id):
+    """Poll import job status."""
+    job = _import_jobs.get(job_id)
+    if not job:
+        return jsonify({'error': 'Job introuvable'}), 404
+    return jsonify(job)
+
+
+def _do_import(job_id, file_path, mode, media_path, db_path):
+    """Background import worker — updates _import_jobs[job_id] in place."""
+    from app.question_manager import QuestionManager
+    from app.models import Question
+    from datetime import datetime, timezone
+
+    job = _import_jobs[job_id]
+    manager = QuestionManager(db_path, media_path)
+    now = datetime.now(timezone.utc).isoformat()
     imported = []
 
-    if file.filename.endswith('.zip'):
-        with zipfile.ZipFile(file.stream, 'r') as zf:
-            # Read questions.json from ZIP
+    # ── Phase 1 : parse file ──────────────────────────────────────────────────
+    job['step'] = 'Lecture du fichier…'
+
+    if file_path.lower().endswith('.zip'):
+        with zipfile.ZipFile(file_path, 'r') as zf:
             if 'questions.json' not in zf.namelist():
-                return jsonify({'error': 'No questions.json in ZIP'}), 400
+                job['status'] = 'error'
+                job['error'] = 'questions.json introuvable dans le ZIP'
+                return
 
             data = json.loads(zf.read('questions.json'))
-            imported_questions = data.get('questions', [])
+            imported = data.get('questions', [])
+            job['total'] = len(imported)
 
-            # Extract media files (stored as media/images/... in ZIP)
-            for name in zf.namelist():
-                if name.startswith('media/') and not name.endswith('/'):
-                    # Strip 'media/' prefix -> extract to MEDIA_PATH
+            # Extract media files
+            media_names = [n for n in zf.namelist()
+                           if n.startswith('media/') and not n.endswith('/')]
+            total_media = len(media_names)
+            if total_media:
+                job['step'] = f'Extraction des médias (0 / {total_media})…'
+                for i, name in enumerate(media_names):
                     rel = name[len('media/'):]
                     target = os.path.join(media_path, rel)
                     os.makedirs(os.path.dirname(target), exist_ok=True)
                     with open(target, 'wb') as f:
                         f.write(zf.read(name))
+                    if i % 10 == 0 or i == total_media - 1:
+                        job['step'] = f'Extraction des médias ({i + 1} / {total_media})…'
+                        job['progress'] = int((i + 1) / total_media * 30)
 
-            # Normalize paths: strip 'media/' prefix if present in question data
-            for q_data in imported_questions:
-                for field in ['question', 'answer']:
-                    section = q_data.get(field, {})
-                    for media_key in ['image', 'audio']:
-                        val = section.get(media_key)
-                        if val and val.startswith('media/'):
-                            section[media_key] = val[len('media/'):]
-
-            imported = imported_questions
-
-    elif file.filename.endswith('.json'):
-        data = json.load(file.stream)
-        imported = data.get('questions', [])
-        # Normalize paths
+        # Normalize media paths
         for q_data in imported:
             for field in ['question', 'answer']:
                 section = q_data.get(field, {})
-                for media_key in ['image', 'audio']:
-                    val = section.get(media_key)
+                for key in ['image', 'audio']:
+                    val = section.get(key)
                     if val and val.startswith('media/'):
-                        section[media_key] = val[len('media/'):]
-    else:
-        return jsonify({'error': 'Unsupported file format. Use .json or .zip'}), 400
+                        section[key] = val[len('media/'):]
 
-    from app.models import Question
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc).isoformat()
+    elif file_path.lower().endswith('.json'):
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        imported = data.get('questions', [])
+        job['total'] = len(imported)
+        for q_data in imported:
+            for field in ['question', 'answer']:
+                section = q_data.get(field, {})
+                for key in ['image', 'audio']:
+                    val = section.get(key)
+                    if val and val.startswith('media/'):
+                        section[key] = val[len('media/'):]
+    else:
+        job['status'] = 'error'
+        job['error'] = 'Format non supporté (.zip ou .json uniquement)'
+        return
+
+    total = len(imported)
+    job['total'] = total
     result = {'added': 0, 'skipped': 0, 'total': 0}
 
+    # ── Phase 2 : insert questions ────────────────────────────────────────────
     if mode == 'replace':
-        # Delete all existing media
+        job['step'] = 'Suppression des questions existantes…'
+        job['progress'] = 30
         existing = manager.load_all()
         for q in existing:
             for media in [q.question, q.answer]:
@@ -374,12 +456,18 @@ def import_questions():
                 if media.audio:
                     manager._delete_media_file(media.audio)
 
-        # Replace with imported — stamp updated_at = now
         new_questions = []
-        for q_data in imported:
+        for i, q_data in enumerate(imported):
             q_data['id'] = generate_id('q')
             q_data['updated_at'] = now
             new_questions.append(Question.from_dict(q_data))
+            if i % 50 == 0 or i == total - 1:
+                job['step'] = f'Préparation des questions… ({i + 1} / {total})'
+                job['progress'] = 30 + int((i + 1) / total * 30)
+                job['processed'] = i + 1
+
+        job['step'] = f'Enregistrement en base… ({total} questions)'
+        job['progress'] = 60
         manager.save_all(new_questions)
         result['added'] = len(new_questions)
         result['total'] = len(new_questions)
@@ -387,11 +475,12 @@ def import_questions():
     elif mode == 'smart_merge':
         added = 0
         duplicates = []
-        for idx, q_data in enumerate(imported):
-            similar = manager.find_similar(q_data.get('answer', {}).get('text', ''))
+        for i, q_data in enumerate(imported):
+            answer_text = q_data.get('answer', {}).get('text', '')
+            similar = manager.find_similar(answer_text) if answer_text else []
             if similar:
                 duplicates.append({
-                    'index': idx,
+                    'index': i,
                     'imported': q_data,
                     'match': similar[0]['question'],
                     'similarity': similar[0]['similarity']
@@ -404,6 +493,11 @@ def import_questions():
                     black_type=q_data.get('black_type')
                 )
                 added += 1
+            if i % 20 == 0 or i == total - 1:
+                job['step'] = f'Analyse des doublons… ({i + 1} / {total})'
+                job['progress'] = 30 + int((i + 1) / total * 65)
+                job['processed'] = i + 1
+
         result['added'] = added
         result['skipped'] = len(duplicates)
         result['total'] = manager.count()
@@ -411,17 +505,26 @@ def import_questions():
             result['duplicates'] = duplicates
 
     else:  # full_merge
-        for q_data in imported:
+        for i, q_data in enumerate(imported):
             manager.create(
                 q_data.get('category', 'blue'),
                 q_data.get('question', {}),
                 q_data.get('answer', {}),
                 black_type=q_data.get('black_type')
             )
+            if i % 20 == 0 or i == total - 1:
+                job['step'] = f'Import des questions… ({i + 1} / {total})'
+                job['progress'] = 30 + int((i + 1) / total * 65)
+                job['processed'] = i + 1
+
         result['added'] = len(imported)
         result['total'] = manager.count()
 
-    return jsonify(result)
+    job['progress'] = 100
+    job['step'] = 'Terminé !'
+    job['processed'] = total
+    job['status'] = 'done'
+    job['result'] = result
 
 
 @bp.route('/api/import/force', methods=['POST'])

@@ -1080,6 +1080,50 @@
     margin-bottom: var(--spacing-sm);
 }
 
+/* ===== IMPORT PROGRESS MODAL ===== */
+.import-progress-modal .modal-header {
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.import-file-info {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-bottom: var(--spacing-md);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.import-bar-wrap {
+    width: 100%;
+    height: 10px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 99px;
+    overflow: hidden;
+    margin-bottom: var(--spacing-md);
+}
+
+.import-bar-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--accent), #818cf8);
+    border-radius: 99px;
+    transition: width 0.5s ease;
+}
+
+.import-step-text {
+    font-size: 0.9rem;
+    color: var(--text-primary);
+    min-height: 1.4em;
+    margin-bottom: var(--spacing-xs);
+}
+
+.import-count-text {
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    min-height: 1.2em;
+}
+
 /* ===== DUPLICATES REVIEW MODAL ===== */
 .duplicates-modal {
     width: 650px;

@@ -12,21 +12,12 @@ const ImportExport = {
             onClick: () => this.doExport()
         }));
 
-        // Import
-        const fileInput = DOM.create('input', {
-            type: 'file',
-            accept: '.json,.zip',
-            style: { display: 'none' }
-        });
-        fileInput.addEventListener('change', (e) => {
-            if (e.target.files[0]) this.showImportModal(e.target.files[0]);
-        });
+        // Import — native file dialog via backend (no upload, no size limit)
         section.appendChild(DOM.create('button', {
             className: 'btn btn-outline',
             textContent: '📂 Importer',
-            onClick: () => fileInput.click()
+            onClick: () => this.showModeModal()
         }));
-        section.appendChild(fileInput);
 
         return section;
     },
@@ -45,7 +36,7 @@ const ImportExport = {
         }
     },
 
-    showImportModal(file) {
+    showModeModal() {
         let selectedMode = 'smart_merge';
 
         const modes = [
@@ -69,14 +60,9 @@ const ImportExport = {
         const modeList = DOM.create('div', { className: 'import-modes' });
         for (const mode of modes) {
             const option = DOM.create('label', { className: 'import-mode-option' });
-            const radio = DOM.create('input', {
-                type: 'radio',
-                name: 'import-mode',
-                value: mode.id
-            });
+            const radio = DOM.create('input', { type: 'radio', name: 'import-mode', value: mode.id });
             if (mode.id === 'smart_merge') radio.checked = true;
             radio.addEventListener('change', () => { selectedMode = mode.id; });
-
             option.appendChild(radio);
             option.appendChild(DOM.create('div', {}, [
                 DOM.create('div', { className: 'import-mode-label', textContent: mode.label }),
@@ -87,32 +73,21 @@ const ImportExport = {
 
         const modal = DOM.create('div', { className: 'modal', style: { width: '550px', padding: '0' } }, [
             DOM.create('div', { className: 'modal-header' }, [
-                DOM.create('h3', { textContent: `📂 Importer : ${file.name}` }),
-                DOM.create('button', {
-                    className: 'modal-close',
-                    textContent: '×',
-                    onClick: () => DOM.hideModal()
-                })
+                DOM.create('h3', { textContent: '📂 Importer des questions' }),
+                DOM.create('button', { className: 'modal-close', textContent: '×', onClick: () => DOM.hideModal() })
             ]),
             DOM.create('div', { className: 'modal-body' }, [
-                DOM.create('p', {
-                    textContent: 'Choisissez le mode d\'import :',
-                    style: { marginBottom: 'var(--spacing-md)' }
-                }),
+                DOM.create('p', { textContent: 'Choisissez le mode d\'import :', style: { marginBottom: 'var(--spacing-md)' } }),
                 modeList
             ]),
             DOM.create('div', { className: 'modal-footer' }, [
-                DOM.create('button', {
-                    className: 'btn btn-outline',
-                    textContent: 'Annuler',
-                    onClick: () => DOM.hideModal()
-                }),
+                DOM.create('button', { className: 'btn btn-outline', textContent: 'Annuler', onClick: () => DOM.hideModal() }),
                 DOM.create('button', {
                     className: 'btn btn-success',
-                    textContent: 'Importer',
-                    onClick: () => {
+                    textContent: 'Choisir un fichier…',
+                    onClick: async () => {
                         DOM.hideModal();
-                        this.doImport(file, selectedMode);
+                        await this.doImport(selectedMode);
                     }
                 })
             ])
@@ -121,7 +96,8 @@ const ImportExport = {
         DOM.showModal(modal);
     },
 
-    async doImport(file, mode) {
+    async doImport(mode) {
+        // Confirm destructive mode before opening file dialog
         if (mode === 'replace') {
             const confirmed = await DOM.confirm(
                 '⚠️ ATTENTION : Toutes les questions existantes seront supprimées et remplacées. Cette action est irréversible !'
@@ -129,31 +105,94 @@ const ImportExport = {
             if (!confirmed) return;
         }
 
-        // Show persistent loading toast
-        const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
-        DOM.toast(`Import en cours… (${sizeMB} MB, merci de patienter)`, 'info', 0);
-
+        // Open native file dialog via backend (no upload, no size limit)
+        let fileInfo;
         try {
-            const formData = new FormData();
-            formData.append('file', file);
-            formData.append('mode', mode);
-            const result = await API.postFormData('/api/import', formData);
+            DOM.toast('Ouverture du sélecteur de fichier…', 'info', 2000);
+            fileInfo = await API.post('/api/import/pick', {});
+        } catch (err) {
+            DOM.toast(`Erreur : ${err.message}`, 'error');
+            return;
+        }
+        if (fileInfo.cancelled) return;
 
-            DOM.clearToasts();
+        // Start background import job
+        let jobData;
+        try {
+            jobData = await API.post('/api/import/start', { path: fileInfo.path, mode });
+        } catch (err) {
+            DOM.toast(`Erreur de démarrage : ${err.message}`, 'error');
+            return;
+        }
+
+        this.showProgressModal(jobData.job_id, fileInfo.name, fileInfo.size, mode);
+    },
+
+    showProgressModal(jobId, fileName, fileSize, mode) {
+        const sizeMB = (fileSize / (1024 * 1024)).toFixed(1);
+
+        // Progress bar elements (kept as refs for live updates)
+        const barFill = DOM.create('div', { className: 'import-bar-fill' });
+        const barWrap = DOM.create('div', { className: 'import-bar-wrap' }, [barFill]);
+        const stepText = DOM.create('div', { className: 'import-step-text', textContent: 'Initialisation…' });
+        const countText = DOM.create('div', { className: 'import-count-text', textContent: '' });
+
+        const modal = DOM.create('div', { className: 'modal import-progress-modal', style: { width: '500px', padding: '0' } }, [
+            DOM.create('div', { className: 'modal-header' }, [
+                DOM.create('h3', { textContent: '📂 Import en cours…' })
+            ]),
+            DOM.create('div', { className: 'modal-body' }, [
+                DOM.create('div', { className: 'import-file-info', textContent: `${fileName} — ${sizeMB} MB` }),
+                barWrap,
+                stepText,
+                countText
+            ])
+        ]);
+
+        DOM.showModal(modal);
+
+        // Poll progress every 600ms
+        const poll = async () => {
+            let job;
+            try {
+                job = await API.get(`/api/import/progress/${jobId}`);
+            } catch {
+                return; // retry on next tick
+            }
+
+            // Update bar
+            barFill.style.width = `${job.progress || 0}%`;
+            stepText.textContent = job.step || '';
+            if (job.total > 0) {
+                countText.textContent = `${job.processed || 0} / ${job.total} questions`;
+            }
+
+            if (job.status === 'running') {
+                setTimeout(poll, 600);
+                return;
+            }
+
+            // Done or error
+            DOM.hideModal();
+
+            if (job.status === 'error') {
+                DOM.toast(`Erreur d'import : ${job.error}`, 'error');
+                return;
+            }
+
+            // Success
+            EditorManage.needsRefresh = true;
+            EditorCreate.refresh();
+
+            const result = job.result;
             if (result.duplicates && result.duplicates.length > 0) {
                 this.showDuplicatesModal(result);
             } else {
                 this.showReport(result, mode);
             }
-            EditorManage.needsRefresh = true;
-            EditorCreate.refresh();
-        } catch (err) {
-            DOM.clearToasts();
-            const msg = err.message.includes('Failed to fetch')
-                ? 'Fichier trop volumineux ou connexion interrompue. Essayez un import par lots.'
-                : err.message;
-            DOM.toast(`Erreur d'import : ${msg}`, 'error');
-        }
+        };
+
+        setTimeout(poll, 600);
     },
 
     showDuplicatesModal(result) {
