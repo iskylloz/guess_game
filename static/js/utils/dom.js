@@ -142,6 +142,12 @@ const DOM = {
         return toast;
     },
 
+    clearToasts() {
+        if (this._toastContainer) {
+            this._toastContainer.innerHTML = '';
+        }
+    },
+
     // ===== CONFIRM DIALOG =====
     confirm(message, title = 'Confirmation') {
         return new Promise((resolve) => {

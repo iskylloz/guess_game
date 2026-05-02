@@ -129,13 +129,17 @@ const ImportExport = {
             if (!confirmed) return;
         }
 
+        // Show persistent loading toast
+        const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
+        DOM.toast(`Import en cours… (${sizeMB} MB, merci de patienter)`, 'info', 0);
+
         try {
-            DOM.toast('Import en cours...', 'info');
             const formData = new FormData();
             formData.append('file', file);
             formData.append('mode', mode);
             const result = await API.postFormData('/api/import', formData);
 
+            DOM.clearToasts();
             if (result.duplicates && result.duplicates.length > 0) {
                 this.showDuplicatesModal(result);
             } else {
@@ -144,7 +148,11 @@ const ImportExport = {
             EditorManage.needsRefresh = true;
             EditorCreate.refresh();
         } catch (err) {
-            DOM.toast(`Erreur d'import : ${err.message}`, 'error');
+            DOM.clearToasts();
+            const msg = err.message.includes('Failed to fetch')
+                ? 'Fichier trop volumineux ou connexion interrompue. Essayez un import par lots.'
+                : err.message;
+            DOM.toast(`Erreur d'import : ${msg}`, 'error');
         }
     },
 

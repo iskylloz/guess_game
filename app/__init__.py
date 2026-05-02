@@ -11,7 +11,7 @@ def create_app(base_path, data_path):
     app.config['DATA_PATH'] = data_path
     app.config['DB_PATH'] = os.path.join(data_path, 'questions.db')
     app.config['MEDIA_PATH'] = os.path.join(data_path, 'media')
-    app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50 MB max upload
+    app.config['MAX_CONTENT_LENGTH'] = 2 * 1024 * 1024 * 1024  # 2 GB max upload
 
     from app.routes import bp
     app.register_blueprint(bp)
