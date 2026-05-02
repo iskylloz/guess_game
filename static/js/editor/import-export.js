@@ -23,17 +23,65 @@ const ImportExport = {
     },
 
     async doExport() {
+        let pickResult;
         try {
-            DOM.toast('Sélectionnez un emplacement...', 'info');
-            const result = await API.post('/api/export');
-            if (result.cancelled) {
-                DOM.toast('Export annulé.', 'info');
-                return;
-            }
-            DOM.toast('Export terminé !', 'success');
+            DOM.toast('Sélectionnez un emplacement…', 'info', 2000);
+            pickResult = await API.post('/api/export/pick', {});
         } catch (err) {
             DOM.toast(`Erreur d'export : ${err.message}`, 'error');
+            return;
         }
+        if (pickResult.cancelled) {
+            DOM.toast('Export annulé.', 'info');
+            return;
+        }
+        this.showExportProgressModal(pickResult.job_id, pickResult.path);
+    },
+
+    showExportProgressModal(jobId, savePath) {
+        const fileName = savePath.split(/[/\\]/).pop();
+
+        const barFill = DOM.create('div', { className: 'import-bar-fill' });
+        const barWrap = DOM.create('div', { className: 'import-bar-wrap' }, [barFill]);
+        const stepText = DOM.create('div', { className: 'import-step-text', textContent: 'Initialisation…' });
+        const countText = DOM.create('div', { className: 'import-count-text', textContent: '' });
+
+        const modal = DOM.create('div', { className: 'modal import-progress-modal', style: { width: '500px', padding: '0' } }, [
+            DOM.create('div', { className: 'modal-header' }, [
+                DOM.create('h3', { textContent: '💾 Export en cours…' })
+            ]),
+            DOM.create('div', { className: 'modal-body' }, [
+                DOM.create('div', { className: 'import-file-info', textContent: fileName }),
+                barWrap,
+                stepText,
+                countText
+            ])
+        ]);
+
+        DOM.showModal(modal);
+
+        const poll = async () => {
+            let job;
+            try { job = await API.get(`/api/export/progress/${jobId}`); }
+            catch { setTimeout(poll, 600); return; }
+
+            barFill.style.width = `${job.progress || 0}%`;
+            stepText.textContent = job.step || '';
+            if (job.total > 0) {
+                countText.textContent = `${job.processed || 0} / ${job.total} médias`;
+            }
+
+            if (job.status === 'running') { setTimeout(poll, 600); return; }
+
+            DOM.hideModal();
+            if (job.status === 'error') {
+                DOM.toast(`Erreur d'export : ${job.error}`, 'error');
+            } else {
+                DOM.toast(`Export terminé ! → ${fileName}`, 'success');
+            }
+        };
+
+        setTimeout(poll, 600);
     },
 
     showModeModal() {

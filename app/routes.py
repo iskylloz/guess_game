@@ -15,8 +15,9 @@ from app.utils import (
     ALLOWED_IMAGE_EXTENSIONS, ALLOWED_AUDIO_EXTENSIONS
 )
 
-# In-memory import job store (desktop app, single user)
+# In-memory job stores (desktop app, single user)
 _import_jobs = {}
+_export_jobs = {}
 
 bp = Blueprint('main', __name__)
 
@@ -260,12 +261,12 @@ def fetch_image_url():
 
 # --- Export / Import ---
 
-@bp.route('/api/export', methods=['POST'])
-def export_questions():
+@bp.route('/api/export/pick', methods=['POST'])
+def export_pick():
+    """Open native save dialog and start background export. Returns job_id."""
     import webview
     from datetime import date
 
-    # Ask user to pick a save location via native dialog
     window = webview.windows[0] if webview.windows else None
     if not window:
         return jsonify({'error': 'No window available'}), 500
@@ -276,36 +277,96 @@ def export_questions():
         save_filename=default_name,
         file_types=('ZIP Files (*.zip)',)
     )
-
     if not result:
         return jsonify({'cancelled': True})
 
     save_path = result if isinstance(result, str) else result[0]
 
-    manager = get_manager()
-    questions = manager.load_all()
+    job_id = str(uuid.uuid4())[:8]
+    _export_jobs[job_id] = {
+        'status': 'running',
+        'step': 'Initialisation…',
+        'progress': 0,
+        'processed': 0,
+        'total': 0,
+        'path': save_path,
+        'error': None,
+    }
+
+    db_path = current_app.config['DB_PATH']
     media_path = current_app.config['MEDIA_PATH']
 
+    def run():
+        try:
+            _do_export(job_id, save_path, db_path, media_path)
+        except Exception as e:
+            _export_jobs[job_id]['status'] = 'error'
+            _export_jobs[job_id]['error'] = str(e)
+
+    threading.Thread(target=run, daemon=True).start()
+    return jsonify({'job_id': job_id, 'path': save_path})
+
+
+@bp.route('/api/export/progress/<job_id>')
+def export_progress(job_id):
+    """Poll export job status."""
+    job = _export_jobs.get(job_id)
+    if not job:
+        return jsonify({'error': 'Job introuvable'}), 404
+    return jsonify(job)
+
+
+def _do_export(job_id, save_path, db_path, media_path):
+    """Background export worker."""
+    from app.question_manager import QuestionManager
+
+    job = _export_jobs[job_id]
+    manager = QuestionManager(db_path, media_path)
+
+    # Phase 1 — load questions
+    job['step'] = 'Lecture des questions…'
+    job['progress'] = 5
+    questions = manager.load_all()
+    total_q = len(questions)
+    job['total'] = total_q
+
+    # Collect unique media files
+    media_files = []
+    seen = set()
+    for q in questions:
+        for media in [q.question, q.answer]:
+            for path in [media.image, media.audio]:
+                if path and path not in seen:
+                    full = os.path.join(media_path, path)
+                    if os.path.exists(full):
+                        media_files.append((full, f'media/{path}'))
+                        seen.add(path)
+
+    total_media = len(media_files)
+    job['step'] = f'Compression ({total_q} questions, {total_media} médias)…'
+    job['progress'] = 10
+
     with zipfile.ZipFile(save_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-        # Write questions JSON
+        # Phase 2 — compress media files (0→80%)
+        for i, (full_path, arc_name) in enumerate(media_files):
+            zf.write(full_path, arc_name)
+            if i % 5 == 0 or i == total_media - 1:
+                job['step'] = f'Compression des médias ({i + 1} / {total_media})…'
+                job['progress'] = 10 + int((i + 1) / max(total_media, 1) * 70)
+                job['processed'] = i + 1
+
+        # Phase 3 — write questions.json (80→100%)
+        job['step'] = 'Écriture des questions…'
+        job['progress'] = 80
         questions_data = {
             'version': 1,
             'questions': [q.to_dict() for q in questions]
         }
         zf.writestr('questions.json', json.dumps(questions_data, ensure_ascii=False, indent=2))
 
-        # Include media files
-        media_files_added = set()
-        for q in questions:
-            for media in [q.question, q.answer]:
-                for path in [media.image, media.audio]:
-                    if path and path not in media_files_added:
-                        full_path = os.path.join(media_path, path)
-                        if os.path.exists(full_path):
-                            zf.write(full_path, f'media/{path}')
-                            media_files_added.add(path)
-
-    return jsonify({'ok': True, 'path': save_path})
+    job['progress'] = 100
+    job['step'] = 'Terminé !'
+    job['status'] = 'done'
 
 
 @bp.route('/api/import/pick', methods=['POST'])
