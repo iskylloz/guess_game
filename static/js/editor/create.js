@@ -156,7 +156,7 @@ const EditorCreate = {
         if (data.image) {
             imgGroup.appendChild(Media.createImagePreview(
                 `/media/${data.image}`,
-                () => ImageEditor.open(`/media/${data.image}`, (newPath) => { data.image = newPath; this.refresh(); }, { text: data.text, category: this.state.category }),
+                () => ImageEditor.open(`/media/${data.image}`, (newPath) => { data.image = newPath; this.refresh(); }, { text: data.text, category: this.state.category, ext: (data.image.split('.').pop() || '') }),
                 () => { data.image = null; this.refresh(); }
             ));
         } else {
@@ -513,6 +513,7 @@ const EditorCreate = {
         // Re-render the editor page
         if (App.currentPageName === 'editor') {
             const container = document.getElementById('app');
+            Media.destroyPlayersIn(container);
             App.pages.editor.render(container);
         }
     }

@@ -48,12 +48,14 @@ const GameUI = {
             this.engine.timer.stop();
         }
         Media.stopAllAudio();
+        if (this.container) Media.destroyPlayersIn(this.container);
     },
 
     // ===== CATEGORY GRID =====
 
     renderCategoryGrid() {
         this.showingAnswer = false;
+        Media.destroyPlayersIn(this.container);
         DOM.clear(this.container);
 
         const screen = DOM.create('div', { className: 'game-play' });
@@ -126,6 +128,7 @@ const GameUI = {
 
     renderQuestion() {
         this.showingAnswer = false;
+        Media.destroyPlayersIn(this.container);
         DOM.clear(this.container);
         Media.stopChannel('questions');
 
@@ -152,7 +155,7 @@ const GameUI = {
 
         // Media
         if (q.question.image) {
-            qContainer.appendChild(this._createAutoSizedImage(`/media/${q.question.image}`, qContainer));
+            qContainer.appendChild(Media.createAutoSizedImage(`/media/${q.question.image}`, qContainer));
         }
         if (q.question.audio) {
             qContainer.appendChild(Media.createAudioPlayer(`/media/${q.question.audio}`));
@@ -219,6 +222,7 @@ const GameUI = {
 
     renderAnswer() {
         this.showingAnswer = true;
+        Media.destroyPlayersIn(this.container);
         DOM.clear(this.container);
         Media.stopChannel('questions');
 
@@ -250,7 +254,7 @@ const GameUI = {
 
         // Answer media
         if (q.answer.image) {
-            aContainer.appendChild(this._createAutoSizedImage(`/media/${q.answer.image}`, aContainer));
+            aContainer.appendChild(Media.createAutoSizedImage(`/media/${q.answer.image}`, aContainer));
         }
         if (q.answer.audio) {
             aContainer.appendChild(Media.createAudioPlayer(`/media/${q.answer.audio}`));
@@ -431,28 +435,6 @@ const GameUI = {
             ])
         ]);
         DOM.showModal(modal);
-    },
-
-    // ===== IMAGE AUTO-SIZING =====
-
-    _createAutoSizedImage(src, container) {
-        const mediaDiv = DOM.create('div', { className: 'question-media' });
-        const imgEl = DOM.create('img', { src });
-        imgEl.addEventListener('load', () => {
-            requestAnimationFrame(() => {
-                const rect = container.getBoundingClientRect();
-                const cW = rect.width || window.innerWidth;
-                const cH = rect.height || window.innerHeight;
-                const reservedH = 140;
-                const availH = Math.max(cH - reservedH, 100);
-                const size = Media.computeImageSize(imgEl, cW, availH);
-                imgEl.style.width = size.width + 'px';
-                imgEl.style.height = size.height + 'px';
-                imgEl.classList.add('sized');
-            });
-        });
-        mediaDiv.appendChild(imgEl);
-        return mediaDiv;
     },
 
     // ===== UI HELPERS =====

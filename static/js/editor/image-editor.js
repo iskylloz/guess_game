@@ -582,8 +582,15 @@ const ImageEditor = {
 
     async save() {
         try {
-            const blob = await new Promise(resolve => this.canvas.toBlob(resolve, 'image/png'));
-            const file = new File([blob], 'edited.png', { type: 'image/png' });
+            // Keep PNG only when the source was PNG (possible transparency); photos
+            // (jpg/webp/...) go back out as high-quality JPEG instead of a huge lossless PNG.
+            const srcExt = (this._context.ext || '').toLowerCase();
+            const asPng = srcExt === 'png' || srcExt === 'gif' || srcExt === '';
+            const mime = asPng ? 'image/png' : 'image/jpeg';
+            const blob = await new Promise(resolve =>
+                asPng ? this.canvas.toBlob(resolve, mime) : this.canvas.toBlob(resolve, mime, 0.92)
+            );
+            const file = new File([blob], asPng ? 'edited.png' : 'edited.jpg', { type: mime });
             const result = await API.uploadFile('/api/upload/image', file);
             DOM.hideModal();
             if (this.onSave) this.onSave(result.path);

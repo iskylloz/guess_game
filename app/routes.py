@@ -3,6 +3,7 @@ import io
 import json
 import uuid
 import zipfile
+import shutil
 import threading
 import urllib.request
 from flask import (
@@ -11,13 +12,14 @@ from flask import (
 )
 from app.question_manager import QuestionManager
 from app.utils import (
-    generate_id, allowed_file, get_file_extension,
+    generate_id, allowed_file, get_file_extension, optimize_image,
     ALLOWED_IMAGE_EXTENSIONS, ALLOWED_AUDIO_EXTENSIONS
 )
 
 # In-memory job stores (desktop app, single user)
 _import_jobs = {}
 _export_jobs = {}
+_optimize_jobs = {}
 
 bp = Blueprint('main', __name__)
 
@@ -200,6 +202,7 @@ def upload_image():
     filename = f'img_{generate_id("i")}.{ext}'
     filepath = os.path.join(current_app.config['MEDIA_PATH'], 'images', filename)
     file.save(filepath)
+    optimize_image(filepath)
 
     return jsonify({'path': f'images/{filename}'})
 
@@ -253,6 +256,7 @@ def fetch_image_url():
             )
             with open(filepath, 'wb') as f:
                 f.write(image_data)
+            optimize_image(filepath)
 
             return jsonify({'path': f'images/{filename}'})
     except Exception as e:
@@ -434,10 +438,57 @@ def import_progress(job_id):
     return jsonify(job)
 
 
+IMPORT_CHUNK = 200  # questions per DB transaction during import
+
+
+def _sanitize_import_entry(q_data):
+    """
+    Normalise one imported question dict in place and return it.
+    Tolerates None sections/texts and legacy 'media/' prefixed paths.
+    """
+    if not isinstance(q_data, dict):
+        raise ValueError('Entrée invalide (pas un objet)')
+    for field in ('question', 'answer'):
+        section = q_data.get(field)
+        if not isinstance(section, dict):
+            section = {}
+            q_data[field] = section
+        if not isinstance(section.get('text'), str):
+            section['text'] = '' if section.get('text') is None else str(section['text'])
+        for key in ('image', 'audio'):
+            val = section.get(key)
+            if isinstance(val, str) and val.startswith('media/'):
+                section[key] = val[len('media/'):]
+            elif val is not None and not isinstance(val, str):
+                section[key] = None
+    if q_data.get('category') != 'black':
+        q_data['black_type'] = None
+    return q_data
+
+
+def _entry_media_paths(q_data):
+    """All media paths (relative) referenced by an imported entry."""
+    paths = []
+    for field in ('question', 'answer'):
+        section = q_data.get(field) or {}
+        for key in ('image', 'audio'):
+            if section.get(key):
+                paths.append(section[key])
+    return paths
+
+
+def _is_safe_zip_member(name):
+    """Reject absolute paths and traversal inside media/ entries."""
+    if name.startswith('/') or name.startswith('\\') or ':' in name:
+        return False
+    parts = name.replace('\\', '/').split('/')
+    return '..' not in parts
+
+
 def _do_import(job_id, file_path, mode, media_path, db_path):
     """Background import worker — updates _import_jobs[job_id] in place."""
     from app.question_manager import QuestionManager
-    from app.models import Question
+    from app.models import Question, VALID_CATEGORIES
     from datetime import datetime, timezone
 
     job = _import_jobs[job_id]
@@ -445,7 +496,7 @@ def _do_import(job_id, file_path, mode, media_path, db_path):
     now = datetime.now(timezone.utc).isoformat()
     imported = []
 
-    # ── Phase 1 : parse file ──────────────────────────────────────────────────
+    # ── Phase 1 : parse file + extract media (0→30%) ─────────────────────────
     job['step'] = 'Lecture du fichier…'
 
     if file_path.lower().endswith('.zip'):
@@ -459,9 +510,9 @@ def _do_import(job_id, file_path, mode, media_path, db_path):
             imported = data.get('questions', [])
             job['total'] = len(imported)
 
-            # Extract media files
             media_names = [n for n in zf.namelist()
-                           if n.startswith('media/') and not n.endswith('/')]
+                           if n.startswith('media/') and not n.endswith('/')
+                           and _is_safe_zip_member(n)]
             total_media = len(media_names)
             if total_media:
                 job['step'] = f'Extraction des médias (0 / {total_media})…'
@@ -469,43 +520,64 @@ def _do_import(job_id, file_path, mode, media_path, db_path):
                     rel = name[len('media/'):]
                     target = os.path.join(media_path, rel)
                     os.makedirs(os.path.dirname(target), exist_ok=True)
-                    with open(target, 'wb') as f:
-                        f.write(zf.read(name))
+                    with zf.open(name) as src, open(target, 'wb') as dst:
+                        shutil.copyfileobj(src, dst, 1024 * 1024)
+                    if rel.startswith('images/'):
+                        optimize_image(target)
                     if i % 10 == 0 or i == total_media - 1:
                         job['step'] = f'Extraction des médias ({i + 1} / {total_media})…'
                         job['progress'] = int((i + 1) / total_media * 30)
 
-        # Normalize media paths
-        for q_data in imported:
-            for field in ['question', 'answer']:
-                section = q_data.get(field, {})
-                for key in ['image', 'audio']:
-                    val = section.get(key)
-                    if val and val.startswith('media/'):
-                        section[key] = val[len('media/'):]
-
     elif file_path.lower().endswith('.json'):
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(file_path, 'r', encoding='utf-8-sig') as f:
             data = json.load(f)
         imported = data.get('questions', [])
         job['total'] = len(imported)
-        for q_data in imported:
-            for field in ['question', 'answer']:
-                section = q_data.get(field, {})
-                for key in ['image', 'audio']:
-                    val = section.get(key)
-                    if val and val.startswith('media/'):
-                        section[key] = val[len('media/'):]
     else:
         job['status'] = 'error'
         job['error'] = 'Format non supporté (.zip ou .json uniquement)'
         return
 
+    if not isinstance(imported, list):
+        job['status'] = 'error'
+        job['error'] = 'Format invalide : "questions" doit être une liste'
+        return
+
     total = len(imported)
     job['total'] = total
-    result = {'added': 0, 'skipped': 0, 'total': 0}
+    result = {'added': 0, 'skipped': 0, 'total': 0, 'errors': 0, 'error_samples': []}
 
-    # ── Phase 2 : insert questions ────────────────────────────────────────────
+    def record_error(i, exc):
+        result['errors'] += 1
+        if len(result['error_samples']) < 5:
+            result['error_samples'].append(f'#{i + 1}: {exc}')
+
+    def flush(pending):
+        """Insert pending (index, entry) pairs in one transaction; fall back per-row on error."""
+        if not pending:
+            return 0
+        items = [(e.get('category', 'blue'), e.get('question'), e.get('answer'), e.get('black_type'))
+                 for _, e in pending]
+        try:
+            manager.create_many(items)
+            return len(items)
+        except ValueError:
+            added = 0
+            for (i, e), item in zip(pending, items):
+                try:
+                    manager.create(*item)
+                    added += 1
+                except ValueError as exc:
+                    record_error(i, exc)
+            return added
+
+    def progress(i, label, base=30, span=65):
+        if i % 20 == 0 or i == total - 1:
+            job['step'] = f'{label} ({i + 1} / {total})'
+            job['progress'] = base + int((i + 1) / max(total, 1) * span)
+            job['processed'] = i + 1
+
+    # ── Phase 2 : insert questions (30→95%) ──────────────────────────────────
     if mode == 'replace':
         job['step'] = 'Suppression des questions existantes…'
         job['progress'] = 30
@@ -519,26 +591,40 @@ def _do_import(job_id, file_path, mode, media_path, db_path):
 
         new_questions = []
         for i, q_data in enumerate(imported):
-            q_data['id'] = generate_id('q')
-            q_data['updated_at'] = now
-            new_questions.append(Question.from_dict(q_data))
-            if i % 50 == 0 or i == total - 1:
-                job['step'] = f'Préparation des questions… ({i + 1} / {total})'
-                job['progress'] = 30 + int((i + 1) / total * 30)
-                job['processed'] = i + 1
+            try:
+                q_data = _sanitize_import_entry(q_data)
+                if q_data.get('category') not in VALID_CATEGORIES:
+                    raise ValueError(f"Catégorie invalide : {q_data.get('category')}")
+                q_data['id'] = generate_id('q')
+                q_data['updated_at'] = now
+                new_questions.append(Question.from_dict(q_data))
+            except (ValueError, KeyError, TypeError) as exc:
+                record_error(i, exc)
+            progress(i, 'Préparation des questions…', 30, 30)
 
-        job['step'] = f'Enregistrement en base… ({total} questions)'
+        job['step'] = f'Enregistrement en base… ({len(new_questions)} questions)'
         job['progress'] = 60
         manager.save_all(new_questions)
         result['added'] = len(new_questions)
         result['total'] = len(new_questions)
 
     elif mode == 'smart_merge':
-        added = 0
+        job['step'] = 'Indexation des questions existantes…'
+        job['progress'] = 30
+        index = manager.build_answer_index()
         duplicates = []
+        pending = []
+        added = 0
+
         for i, q_data in enumerate(imported):
-            answer_text = q_data.get('answer', {}).get('text', '')
-            similar = manager.find_similar(answer_text) if answer_text else []
+            try:
+                q_data = _sanitize_import_entry(q_data)
+            except ValueError as exc:
+                record_error(i, exc)
+                continue
+
+            answer_text = q_data['answer']['text']
+            similar = manager.find_similar_in_index(index, answer_text) if answer_text.strip() else []
             if similar:
                 duplicates.append({
                     'index': i,
@@ -547,18 +633,18 @@ def _do_import(job_id, file_path, mode, media_path, db_path):
                     'similarity': similar[0]['similarity']
                 })
             else:
-                manager.create(
-                    q_data.get('category', 'blue'),
-                    q_data.get('question', {}),
-                    q_data.get('answer', {}),
-                    black_type=q_data.get('black_type')
-                )
-                added += 1
-            if i % 20 == 0 or i == total - 1:
-                job['step'] = f'Analyse des doublons… ({i + 1} / {total})'
-                job['progress'] = 30 + int((i + 1) / total * 65)
-                job['processed'] = i + 1
+                pending.append((i, q_data))
+                # Keep intra-set duplicates detectable
+                index.append(manager.make_index_entry(
+                    None, q_data.get('category', 'blue'),
+                    q_data['question']['text'], answer_text
+                ))
+                if len(pending) >= IMPORT_CHUNK:
+                    added += flush(pending)
+                    pending = []
+            progress(i, 'Analyse des doublons…')
 
+        added += flush(pending)
         result['added'] = added
         result['skipped'] = len(duplicates)
         result['total'] = manager.count()
@@ -566,19 +652,19 @@ def _do_import(job_id, file_path, mode, media_path, db_path):
             result['duplicates'] = duplicates
 
     else:  # full_merge
+        pending = []
+        added = 0
         for i, q_data in enumerate(imported):
-            manager.create(
-                q_data.get('category', 'blue'),
-                q_data.get('question', {}),
-                q_data.get('answer', {}),
-                black_type=q_data.get('black_type')
-            )
-            if i % 20 == 0 or i == total - 1:
-                job['step'] = f'Import des questions… ({i + 1} / {total})'
-                job['progress'] = 30 + int((i + 1) / total * 65)
-                job['processed'] = i + 1
-
-        result['added'] = len(imported)
+            try:
+                pending.append((i, _sanitize_import_entry(q_data)))
+            except ValueError as exc:
+                record_error(i, exc)
+            if len(pending) >= IMPORT_CHUNK:
+                added += flush(pending)
+                pending = []
+            progress(i, 'Import des questions…')
+        added += flush(pending)
+        result['added'] = added
         result['total'] = manager.count()
 
     job['progress'] = 100
@@ -590,20 +676,122 @@ def _do_import(job_id, file_path, mode, media_path, db_path):
 
 @bp.route('/api/import/force', methods=['POST'])
 def import_force():
-    """Force-import selected duplicate questions."""
-    data = request.get_json()
+    """
+    Force-import selected duplicate questions (single transaction) and delete the
+    media files of discarded duplicates that nothing references.
+    Body: { questions: [...], discard: [ "images/...", "audio/..." ] }
+    """
+    data = request.get_json() or {}
     questions = data.get('questions', [])
+    discard = data.get('discard', [])
     manager = get_manager()
-    added = 0
+
+    items = []
+    errors = 0
     for q_data in questions:
-        manager.create(
-            q_data.get('category', 'blue'),
-            q_data.get('question', {}),
-            q_data.get('answer', {}),
-            black_type=q_data.get('black_type')
-        )
-        added += 1
-    return jsonify({'added': added, 'total': manager.count()})
+        try:
+            q_data = _sanitize_import_entry(q_data)
+            items.append((q_data.get('category', 'blue'), q_data.get('question'),
+                          q_data.get('answer'), q_data.get('black_type')))
+        except ValueError:
+            errors += 1
+
+    try:
+        added = len(manager.create_many(items))
+    except ValueError:
+        # One invalid category in the batch: insert row by row, skipping bad ones
+        added = 0
+        for item in items:
+            try:
+                manager.create(*item)
+                added += 1
+            except ValueError:
+                errors += 1
+
+    # Cleanup orphan media extracted for duplicates the user chose not to import
+    removed = 0
+    for path in discard:
+        if isinstance(path, str) and path and not manager.is_media_referenced(path):
+            if manager._delete_media_file(path):
+                removed += 1
+
+    return jsonify({'added': added, 'errors': errors, 'removed_media': removed,
+                    'total': manager.count()})
+
+
+# --- Media optimisation (background job) ---
+
+@bp.route('/api/media/optimize', methods=['POST'])
+def media_optimize_start():
+    """Downscale every image referenced by the DB (in place). Returns job_id."""
+    job_id = str(uuid.uuid4())[:8]
+    _optimize_jobs[job_id] = {
+        'status': 'running',
+        'step': 'Initialisation…',
+        'progress': 0,
+        'processed': 0,
+        'total': 0,
+        'result': None,
+        'error': None,
+    }
+    db_path = current_app.config['DB_PATH']
+    media_path = current_app.config['MEDIA_PATH']
+
+    def run():
+        try:
+            _do_optimize(job_id, db_path, media_path)
+        except Exception as e:
+            _optimize_jobs[job_id]['status'] = 'error'
+            _optimize_jobs[job_id]['error'] = str(e)
+
+    threading.Thread(target=run, daemon=True).start()
+    return jsonify({'job_id': job_id})
+
+
+@bp.route('/api/media/optimize/progress/<job_id>')
+def media_optimize_progress(job_id):
+    job = _optimize_jobs.get(job_id)
+    if not job:
+        return jsonify({'error': 'Job introuvable'}), 404
+    return jsonify(job)
+
+
+def _do_optimize(job_id, db_path, media_path):
+    """Background worker: optimize_image() on every referenced image."""
+    from app.question_manager import QuestionManager
+
+    job = _optimize_jobs[job_id]
+    manager = QuestionManager(db_path, media_path)
+
+    job['step'] = 'Lecture des questions…'
+    paths = []
+    seen = set()
+    for q in manager.load_all():
+        for media in (q.question, q.answer):
+            p = media.image
+            if p and p not in seen:
+                seen.add(p)
+                paths.append(p)
+
+    total = len(paths)
+    job['total'] = total
+    saved = 0
+    resized = 0
+    for i, rel in enumerate(paths):
+        stats = optimize_image(os.path.join(media_path, rel))
+        saved += max(0, stats['old_size'] - stats['new_size'])
+        if stats['resized']:
+            resized += 1
+        if i % 5 == 0 or i == total - 1:
+            job['step'] = f'Optimisation des images ({i + 1} / {total})…'
+            job['progress'] = int((i + 1) / max(total, 1) * 100)
+            job['processed'] = i + 1
+
+    job['progress'] = 100
+    job['step'] = 'Terminé !'
+    job['processed'] = total
+    job['status'] = 'done'
+    job['result'] = {'total': total, 'resized': resized, 'saved_bytes': saved}
 
 
 # --- Settings ---

@@ -133,7 +133,10 @@ const Media = {
      * Create a custom audio player element.
      */
     createAudioPlayer(src) {
-        const audio = new Audio(src);
+        const audio = new Audio();
+        // Don't download the whole file until the user presses play
+        audio.preload = 'metadata';
+        audio.src = src;
         this._trackAudio(audio);
 
         const container = DOM.create('div', { className: 'game-audio-player' });
@@ -188,6 +191,17 @@ const Media = {
         container._destroy = () => this._untrackAudio(audio);
 
         return container;
+    },
+
+    /**
+     * Release every audio player under `root` (or the whole document).
+     * Must be called before a screen is cleared, otherwise the Audio objects
+     * (and their buffered data) stay tracked for the whole session.
+     */
+    destroyPlayersIn(root = document) {
+        root.querySelectorAll('.game-audio-player').forEach(player => {
+            if (player._destroy) player._destroy();
+        });
     },
 
     /**
@@ -407,6 +421,46 @@ const Media = {
         if (ratio >= 0.8)  return { type: 'square',     label: 'Carré',       ratio };
         if (ratio >= 0.55) return { type: 'portrait',   label: 'Portrait',    ratio };
                            return { type: 'ultra-tall', label: 'Ultra-haut',  ratio };
+    },
+
+    /**
+     * Create a `.question-media` block whose <img> is decoded off the main
+     * thread (img.decode()) and then sized with computeImageSize() to fit
+     * `container`. Used by the game screen and the editor preview.
+     */
+    createAutoSizedImage(src, container, reservedH = 140) {
+        const mediaDiv = DOM.create('div', { className: 'question-media' });
+        const imgEl = DOM.create('img', { src, decoding: 'async' });
+
+        const applySize = () => {
+            const rect = container.getBoundingClientRect();
+            const cW = rect.width || window.innerWidth;
+            const cH = rect.height || window.innerHeight;
+            const availH = Math.max(cH - reservedH, 100);
+            const size = this.computeImageSize(imgEl, cW, availH);
+            imgEl.style.width = size.width + 'px';
+            imgEl.style.height = size.height + 'px';
+            imgEl.classList.add('sized');
+        };
+
+        // decode() resolves once the bitmap is ready, so the first paint
+        // never blocks on decoding a large photo. Fall back to 'load' if
+        // decode() rejects (e.g. unsupported format) so the image still shows.
+        const ready = typeof imgEl.decode === 'function'
+            ? imgEl.decode()
+            : new Promise(res => imgEl.addEventListener('load', res, { once: true }));
+        ready
+            .catch(() => new Promise(res => {
+                if (imgEl.complete && imgEl.naturalWidth) res();
+                else imgEl.addEventListener('load', res, { once: true });
+            }))
+            .then(() => {
+                if (!imgEl.isConnected) return; // screen already replaced
+                requestAnimationFrame(applySize);
+            });
+
+        mediaDiv.appendChild(imgEl);
+        return mediaDiv;
     },
 
     /**

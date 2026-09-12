@@ -35,53 +35,113 @@ const ImportExport = {
             DOM.toast('Export annulé.', 'info');
             return;
         }
-        this.showExportProgressModal(pickResult.job_id, pickResult.path);
+        const fileName = pickResult.path.split(/[/\\]/).pop();
+        this.showJobProgressModal({
+            jobId: pickResult.job_id,
+            progressUrl: '/api/export/progress/',
+            title: '💾 Export en cours…',
+            fileInfo: fileName,
+            unit: 'médias',
+            onDone: () => DOM.toast(`Export terminé ! → ${fileName}`, 'success'),
+            onError: (msg) => DOM.toast(`Erreur d'export : ${msg}`, 'error')
+        });
     },
 
-    showExportProgressModal(jobId, savePath) {
-        const fileName = savePath.split(/[/\\]/).pop();
+    /**
+     * Generic progress modal for background jobs (import / export / optimize).
+     * Polls `${progressUrl}${jobId}` every 600ms. Transient fetch errors are
+     * retried; after MAX_POLL_FAILURES consecutive failures the job is abandoned.
+     */
+    MAX_POLL_FAILURES: 10,
+    POLL_INTERVAL: 600,
 
+    showJobProgressModal({ jobId, progressUrl, title, fileInfo = '', unit = '', onDone, onError }) {
         const barFill = DOM.create('div', { className: 'import-bar-fill' });
         const barWrap = DOM.create('div', { className: 'import-bar-wrap' }, [barFill]);
         const stepText = DOM.create('div', { className: 'import-step-text', textContent: 'Initialisation…' });
         const countText = DOM.create('div', { className: 'import-count-text', textContent: '' });
 
-        const modal = DOM.create('div', { className: 'modal import-progress-modal', style: { width: '500px', padding: '0' } }, [
-            DOM.create('div', { className: 'modal-header' }, [
-                DOM.create('h3', { textContent: '💾 Export en cours…' })
-            ]),
-            DOM.create('div', { className: 'modal-body' }, [
-                DOM.create('div', { className: 'import-file-info', textContent: fileName }),
-                barWrap,
-                stepText,
-                countText
-            ])
-        ]);
+        const bodyChildren = [];
+        if (fileInfo) bodyChildren.push(DOM.create('div', { className: 'import-file-info', textContent: fileInfo }));
+        bodyChildren.push(barWrap, stepText, countText);
 
+        const modal = DOM.create('div', { className: 'modal import-progress-modal', style: { width: '500px', padding: '0' } }, [
+            DOM.create('div', { className: 'modal-header' }, [DOM.create('h3', { textContent: title })]),
+            DOM.create('div', { className: 'modal-body' }, bodyChildren)
+        ]);
         DOM.showModal(modal);
 
+        let failures = 0;
         const poll = async () => {
             let job;
-            try { job = await API.get(`/api/export/progress/${jobId}`); }
-            catch { setTimeout(poll, 600); return; }
+            try {
+                job = await API.get(`${progressUrl}${jobId}`);
+                failures = 0;
+            } catch (err) {
+                failures++;
+                if (failures >= this.MAX_POLL_FAILURES) {
+                    DOM.hideModal();
+                    if (onError) onError(`connexion perdue (${err.message})`);
+                    return;
+                }
+                setTimeout(poll, this.POLL_INTERVAL);
+                return;
+            }
 
             barFill.style.width = `${job.progress || 0}%`;
             stepText.textContent = job.step || '';
             if (job.total > 0) {
-                countText.textContent = `${job.processed || 0} / ${job.total} médias`;
+                countText.textContent = `${job.processed || 0} / ${job.total}${unit ? ' ' + unit : ''}`;
             }
 
-            if (job.status === 'running') { setTimeout(poll, 600); return; }
+            if (job.status === 'running') {
+                setTimeout(poll, this.POLL_INTERVAL);
+                return;
+            }
 
             DOM.hideModal();
             if (job.status === 'error') {
-                DOM.toast(`Erreur d'export : ${job.error}`, 'error');
-            } else {
-                DOM.toast(`Export terminé ! → ${fileName}`, 'success');
+                if (onError) onError(job.error || 'erreur inconnue');
+            } else if (onDone) {
+                onDone(job.result, job);
             }
         };
+        setTimeout(poll, this.POLL_INTERVAL);
+    },
 
-        setTimeout(poll, 600);
+    /** One-off in-place downscale of every stored image (see /api/media/optimize). */
+    async doOptimizeImages() {
+        const confirmed = await DOM.confirm(
+            'Les images trop grandes (côté > 2560 px) seront réduites sur place pour éviter les ' +
+            'ralentissements en jeu. Les PNG restent sans perte, les JPEG sont ré-encodés en haute ' +
+            'qualité. Cette opération est irréversible : exportez un ZIP de sauvegarde avant si besoin.',
+            '🖼️ Optimiser les images'
+        );
+        if (!confirmed) return;
+
+        let jobData;
+        try {
+            jobData = await API.post('/api/media/optimize', {});
+        } catch (err) {
+            DOM.toast(`Erreur : ${err.message}`, 'error');
+            return;
+        }
+
+        this.showJobProgressModal({
+            jobId: jobData.job_id,
+            progressUrl: '/api/media/optimize/progress/',
+            title: '🖼️ Optimisation des images…',
+            unit: 'images',
+            onDone: (result) => {
+                const savedMB = ((result.saved_bytes || 0) / (1024 * 1024)).toFixed(1);
+                DOM.toast(
+                    `${result.total} image${result.total > 1 ? 's' : ''} analysée${result.total > 1 ? 's' : ''}, ` +
+                    `${result.resized} réduite${result.resized > 1 ? 's' : ''}, ${savedMB} MB libérés.`,
+                    'success', 6000
+                );
+            },
+            onError: (msg) => DOM.toast(`Erreur d'optimisation : ${msg}`, 'error')
+        });
     },
 
     showModeModal() {
@@ -178,69 +238,23 @@ const ImportExport = {
 
     showProgressModal(jobId, fileName, fileSize, mode) {
         const sizeMB = (fileSize / (1024 * 1024)).toFixed(1);
-
-        // Progress bar elements (kept as refs for live updates)
-        const barFill = DOM.create('div', { className: 'import-bar-fill' });
-        const barWrap = DOM.create('div', { className: 'import-bar-wrap' }, [barFill]);
-        const stepText = DOM.create('div', { className: 'import-step-text', textContent: 'Initialisation…' });
-        const countText = DOM.create('div', { className: 'import-count-text', textContent: '' });
-
-        const modal = DOM.create('div', { className: 'modal import-progress-modal', style: { width: '500px', padding: '0' } }, [
-            DOM.create('div', { className: 'modal-header' }, [
-                DOM.create('h3', { textContent: '📂 Import en cours…' })
-            ]),
-            DOM.create('div', { className: 'modal-body' }, [
-                DOM.create('div', { className: 'import-file-info', textContent: `${fileName} — ${sizeMB} MB` }),
-                barWrap,
-                stepText,
-                countText
-            ])
-        ]);
-
-        DOM.showModal(modal);
-
-        // Poll progress every 600ms
-        const poll = async () => {
-            let job;
-            try {
-                job = await API.get(`/api/import/progress/${jobId}`);
-            } catch {
-                return; // retry on next tick
-            }
-
-            // Update bar
-            barFill.style.width = `${job.progress || 0}%`;
-            stepText.textContent = job.step || '';
-            if (job.total > 0) {
-                countText.textContent = `${job.processed || 0} / ${job.total} questions`;
-            }
-
-            if (job.status === 'running') {
-                setTimeout(poll, 600);
-                return;
-            }
-
-            // Done or error
-            DOM.hideModal();
-
-            if (job.status === 'error') {
-                DOM.toast(`Erreur d'import : ${job.error}`, 'error');
-                return;
-            }
-
-            // Success
-            EditorManage.needsRefresh = true;
-            EditorCreate.refresh();
-
-            const result = job.result;
-            if (result.duplicates && result.duplicates.length > 0) {
-                this.showDuplicatesModal(result);
-            } else {
-                this.showReport(result, mode);
-            }
-        };
-
-        setTimeout(poll, 600);
+        this.showJobProgressModal({
+            jobId,
+            progressUrl: '/api/import/progress/',
+            title: '📂 Import en cours…',
+            fileInfo: `${fileName} — ${sizeMB} MB`,
+            unit: 'questions',
+            onDone: (result) => {
+                EditorManage.needsRefresh = true;
+                EditorCreate.refresh();
+                if (result.duplicates && result.duplicates.length > 0) {
+                    this.showDuplicatesModal(result);
+                } else {
+                    this.showReport(result, mode);
+                }
+            },
+            onError: (msg) => DOM.toast(`Erreur d'import : ${msg}`, 'error', 6000)
+        });
     },
 
     showDuplicatesModal(result) {
@@ -328,19 +342,30 @@ const ImportExport = {
             textContent: 'Confirmer',
             onClick: async () => {
                 DOM.hideModal();
-                if (selected.size > 0) {
-                    const toImport = duplicates.filter((_, i) => selected.has(i)).map(d => d.imported);
-                    try {
-                        DOM.toast('Import des doublons sélectionnés...', 'info');
-                        const forceResult = await API.post('/api/import/force', { questions: toImport });
+                const toImport = duplicates.filter((_, i) => selected.has(i)).map(d => d.imported);
+                // Media extracted for duplicates we don't keep is now orphaned — let the
+                // backend delete it (it keeps anything still referenced by a question).
+                const discard = [];
+                duplicates.forEach((d, i) => {
+                    if (selected.has(i)) return;
+                    for (const side of ['question', 'answer']) {
+                        const m = d.imported[side] || {};
+                        if (m.image) discard.push(m.image);
+                        if (m.audio) discard.push(m.audio);
+                    }
+                });
+                try {
+                    if (toImport.length > 0) DOM.toast('Import des doublons sélectionnés...', 'info');
+                    const forceResult = await API.post('/api/import/force', { questions: toImport, discard });
+                    if (toImport.length > 0) {
                         DOM.toast(`${forceResult.added} question${forceResult.added > 1 ? 's' : ''} supplémentaire${forceResult.added > 1 ? 's' : ''} ajoutée${forceResult.added > 1 ? 's' : ''} !`, 'success');
                         EditorManage.needsRefresh = true;
                         EditorCreate.refresh();
-                    } catch (err) {
-                        DOM.toast(`Erreur : ${err.message}`, 'error');
+                    } else {
+                        DOM.toast(`Import terminé ! ${result.added} ajoutée${result.added > 1 ? 's' : ''}, ${duplicates.length} ignoré${duplicates.length > 1 ? 's' : ''}.`, 'success');
                     }
-                } else {
-                    DOM.toast(`Import terminé ! ${result.added} ajoutée${result.added > 1 ? 's' : ''}, ${duplicates.length} ignoré${duplicates.length > 1 ? 's' : ''}.`, 'success');
+                } catch (err) {
+                    DOM.toast(`Erreur : ${err.message}`, 'error');
                 }
             }
         });
@@ -378,6 +403,10 @@ const ImportExport = {
         const lines = [`✅ ${modeLabels[mode]} terminée !`];
         if (result.added !== undefined) lines.push(`✅ ${result.added} nouvelles ajoutées`);
         if (result.skipped) lines.push(`⚠️ ${result.skipped} doublons ignorés`);
+        if (result.errors) {
+            lines.push(`❌ ${result.errors} entrée${result.errors > 1 ? 's' : ''} invalide${result.errors > 1 ? 's' : ''} ignorée${result.errors > 1 ? 's' : ''}`);
+            for (const sample of (result.error_samples || [])) lines.push(`   · ${sample}`);
+        }
         lines.push(`📊 ${result.total} total`);
         if (mode !== 'replace') lines.push('💡 ID régénérés');
 

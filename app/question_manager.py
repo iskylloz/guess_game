@@ -6,6 +6,19 @@ from app.models import Question, MediaContent, VALID_CATEGORIES
 from app.utils import generate_id
 
 
+def _word_set(text):
+    """Lowercased word set used for Jaccard similarity."""
+    return set((text or '').lower().split())
+
+
+def _jaccard(a, b):
+    """Jaccard similarity between two word sets (0..1)."""
+    if not a or not b:
+        return 0.0
+    union = a | b
+    return len(a & b) / len(union) if union else 0.0
+
+
 class QuestionManager:
     def __init__(self, db_path, media_path):
         self.db_path = db_path
@@ -128,28 +141,34 @@ class QuestionManager:
         finally:
             conn.close()
 
-    def create(self, category, question_data, answer_data, black_type=None):
-        """Create a new question and return it."""
+    def _build_question(self, category, question_data, answer_data, black_type=None):
+        """Validate input and build a new Question object (not persisted)."""
         if category not in VALID_CATEGORIES:
             raise ValueError(f'Invalid category: {category}')
+        question_data = question_data or {}
+        answer_data = answer_data or {}
 
-        question = Question(
+        return Question(
             id=generate_id('q'),
             category=category,
             question=MediaContent(
-                text=question_data.get('text', ''),
+                text=question_data.get('text') or '',
                 image=question_data.get('image'),
                 audio=question_data.get('audio'),
                 youtube=question_data.get('youtube')
             ),
             answer=MediaContent(
-                text=answer_data.get('text', ''),
+                text=answer_data.get('text') or '',
                 image=answer_data.get('image'),
                 audio=answer_data.get('audio'),
                 youtube=answer_data.get('youtube')
             ),
             black_type=black_type if category == 'black' else None
         )
+
+    def create(self, category, question_data, answer_data, black_type=None):
+        """Create a new question and return it."""
+        question = self._build_question(category, question_data, answer_data, black_type)
 
         conn = self._get_conn()
         try:
@@ -159,6 +178,26 @@ class QuestionManager:
             conn.close()
 
         return question
+
+    def create_many(self, items):
+        """
+        Insert many questions in a single transaction.
+        items: iterable of (category, question_data, answer_data, black_type).
+        Validation happens before any write, so either all rows are inserted or none.
+        """
+        questions = [self._build_question(*item) for item in items]
+        if not questions:
+            return []
+
+        conn = self._get_conn()
+        try:
+            for q in questions:
+                self._insert_question(conn, q)
+            conn.commit()
+        finally:
+            conn.close()
+
+        return questions
 
     def update(self, question_id, category, question_data, answer_data, black_type=None):
         """Update an existing question."""
@@ -254,15 +293,23 @@ class QuestionManager:
             conn.close()
 
     def _delete_media_file(self, relative_path):
-        """Delete a media file by its relative path (e.g. 'images/img_xxx.jpg')."""
-        if not relative_path:
-            return
-        full_path = os.path.join(self.media_path, relative_path)
-        if os.path.exists(full_path):
+        """
+        Delete a media file by its relative path (e.g. 'images/img_xxx.jpg').
+        Refuses paths that escape the media folder. Returns True if a file was removed.
+        """
+        if not relative_path or not isinstance(relative_path, str):
+            return False
+        media_root = os.path.abspath(self.media_path)
+        full_path = os.path.abspath(os.path.join(media_root, relative_path))
+        if not full_path.startswith(media_root + os.sep):
+            return False
+        if os.path.isfile(full_path):
             try:
                 os.remove(full_path)
+                return True
             except OSError:
-                pass
+                return False
+        return False
 
     def get_stats(self):
         """Get question counts per category and total."""
@@ -314,34 +361,95 @@ class QuestionManager:
             conn.close()
 
     def find_similar(self, answer_text, threshold=0.5):
-        """Find questions with similar answer text using Jaccard similarity."""
-        words_new = set(answer_text.lower().split())
+        """Find questions with similar answer text using Jaccard similarity (full dicts)."""
+        words_new = _word_set(answer_text)
         if not words_new:
             return []
 
         conn = self._get_conn()
         try:
-            rows = conn.execute(
-                'SELECT * FROM questions'
-            ).fetchall()
-
+            rows = conn.execute('SELECT * FROM questions').fetchall()
             similar = []
             for row in rows:
-                words_existing = set(row['answer_text'].lower().split())
-                if not words_existing:
-                    continue
-                intersection = words_new & words_existing
-                union = words_new | words_existing
-                similarity = len(intersection) / len(union) if union else 0
+                similarity = _jaccard(words_new, _word_set(row['answer_text']))
                 if similarity >= threshold:
-                    q = self._row_to_question(row)
                     similar.append({
-                        'question': q.to_dict(),
+                        'question': self._row_to_question(row).to_dict(),
                         'similarity': round(similarity * 100)
                     })
-
             similar.sort(key=lambda x: x['similarity'], reverse=True)
             return similar[:10]
+        finally:
+            conn.close()
+
+    # --- Bulk similarity (import) ---
+    # An "index" is a plain list of entries built once, so a large import
+    # doesn't re-query and re-tokenize the whole table for every question.
+
+    @staticmethod
+    def make_index_entry(question_id, category, question_text, answer_text):
+        return {
+            'id': question_id,
+            'category': category,
+            'question_text': question_text or '',
+            'answer_text': answer_text or '',
+            'words': _word_set(answer_text),
+        }
+
+    def build_answer_index(self):
+        """Load a lightweight in-memory index of all questions for similarity checks."""
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                'SELECT id, category, question_text, answer_text FROM questions'
+            ).fetchall()
+            return [
+                self.make_index_entry(r['id'], r['category'], r['question_text'], r['answer_text'])
+                for r in rows
+            ]
+        finally:
+            conn.close()
+
+    @staticmethod
+    def find_similar_in_index(index, answer_text, threshold=0.5, limit=10):
+        """
+        Same contract as find_similar() but against an in-memory index.
+        The 'question' entry is slim (id, category, question.text, answer.text).
+        """
+        words_new = _word_set(answer_text)
+        if not words_new:
+            return []
+
+        similar = []
+        for entry in index:
+            similarity = _jaccard(words_new, entry['words'])
+            if similarity >= threshold:
+                similar.append({
+                    'question': {
+                        'id': entry['id'],
+                        'category': entry['category'],
+                        'question': {'text': entry['question_text']},
+                        'answer': {'text': entry['answer_text']},
+                    },
+                    'similarity': round(similarity * 100)
+                })
+        similar.sort(key=lambda x: x['similarity'], reverse=True)
+        return similar[:limit]
+
+    def is_media_referenced(self, relative_path):
+        """True if any question references this media path."""
+        if not relative_path:
+            return False
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                '''SELECT 1 FROM questions
+                   WHERE question_image = ? OR question_audio = ?
+                      OR answer_image = ? OR answer_audio = ?
+                   LIMIT 1''',
+                (relative_path,) * 4
+            ).fetchone()
+            return row is not None
         finally:
             conn.close()
 

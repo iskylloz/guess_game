@@ -124,6 +124,7 @@ const App = {
         Media.stopAllAudio();
 
         const container = document.getElementById('app');
+        Media.destroyPlayersIn(container);
         DOM.clear(container);
 
         // Hide settings button during active game play (keybind still works)

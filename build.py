@@ -43,18 +43,30 @@ def generate_ico():
 
 
 def clean():
-    """Remove previous build artifacts."""
+    """Remove previous build artifacts (retry on Windows file-lock)."""
+    import time
     for folder in [BUILD, DIST]:
-        if os.path.exists(folder):
-            shutil.rmtree(folder)
-            print(f"  Cleaned {folder}")
+        if not os.path.exists(folder):
+            continue
+        attempts = 6
+        for attempt in range(1, attempts + 1):
+            try:
+                shutil.rmtree(folder)
+                print(f"  Cleaned {folder}")
+                break
+            except PermissionError:
+                if attempt == attempts:
+                    print(f"  WARNING: could not delete {folder} (file locked). Skipping.")
+                else:
+                    print(f"  File locked, retrying in 3s… ({attempt}/{attempts - 1})")
+                    time.sleep(3)
 
 
 def build():
     """Run PyInstaller with build.spec."""
     spec_file = os.path.join(ROOT, 'build.spec')
     result = subprocess.run(
-        [sys.executable, '-m', 'PyInstaller', spec_file, '--distpath', DIST, '--workpath', BUILD],
+        [sys.executable, '-m', 'PyInstaller', spec_file, '--distpath', DIST, '--workpath', BUILD, '-y'],
         cwd=ROOT,
     )
     if result.returncode != 0:

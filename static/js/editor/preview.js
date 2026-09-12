@@ -32,7 +32,7 @@ const Preview = {
         left.appendChild(DOM.create('button', {
             className: 'btn btn-ghost btn-sm',
             textContent: '← Fermer',
-            onClick: () => DOM.hideModal()
+            onClick: () => { Media.destroyPlayersIn(this._qContainer); DOM.hideModal(); }
         }));
         header.appendChild(left);
 
@@ -88,6 +88,7 @@ const Preview = {
         const data = this.showingAnswer ? q.answer : q.question;
 
         // Update question container
+        Media.destroyPlayersIn(this._qContainer);
         DOM.clear(this._qContainer);
 
         // Category badge
@@ -100,7 +101,7 @@ const Preview = {
 
         // Media
         if (data.image) {
-            this._qContainer.appendChild(this._createAutoSizedImage(`/media/${data.image}`, this._qContainer));
+            this._qContainer.appendChild(Media.createAutoSizedImage(`/media/${data.image}`, this._qContainer));
         }
         if (data.audio) {
             this._qContainer.appendChild(Media.createAudioPlayer(`/media/${data.audio}`));
@@ -161,25 +162,5 @@ const Preview = {
         GameAnimations.flash(this._qContainer, this._isBlack ? 'wrong-black' : 'wrong');
         GameAnimations.shake(this._qContainer, this._isBlack ? 'intense' : 'normal');
         setTimeout(() => { this.showingAnswer = false; this._updateContent(); }, 1000);
-    },
-
-    _createAutoSizedImage(src, container) {
-        const mediaDiv = DOM.create('div', { className: 'question-media' });
-        const imgEl = DOM.create('img', { src });
-        imgEl.addEventListener('load', () => {
-            requestAnimationFrame(() => {
-                const rect = container.getBoundingClientRect();
-                const cW = rect.width || window.innerWidth;
-                const cH = rect.height || window.innerHeight;
-                const reservedH = 140;
-                const availH = Math.max(cH - reservedH, 100);
-                const size = Media.computeImageSize(imgEl, cW, availH);
-                imgEl.style.width = size.width + 'px';
-                imgEl.style.height = size.height + 'px';
-                imgEl.classList.add('sized');
-            });
-        });
-        mediaDiv.appendChild(imgEl);
-        return mediaDiv;
     }
 };

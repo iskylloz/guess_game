@@ -24,3 +24,6 @@ CLAUDE.md
 # Virtual env
 venv/
 .venv/
+
+# Sample question packs (huge, local only)
+exemple/

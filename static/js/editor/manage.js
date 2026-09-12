@@ -8,6 +8,7 @@ const EditorManage = {
     filterText: '',
     sortBy: 'newest',
     needsRefresh: true,
+    PAGE_SIZE: 150,  // cards rendered per batch (1300+ questions would otherwise build ~25k nodes at once)
 
     async render(container) {
         if (this.needsRefresh) {
@@ -198,66 +199,90 @@ const EditorManage = {
             return list;
         }
 
-        for (const q of filtered) {
-            const cat = Media.getCategoryById(q.category);
-            const card = DOM.create('div', {
-                className: 'question-card',
-                style: { borderLeftColor: cat.color },
-                onClick: () => this.editQuestion(q)
-            });
+        let rendered = 0;
+        let moreBtn = null;
 
-            const body = DOM.create('div', { className: 'question-card-body' });
+        const renderBatch = () => {
+            const end = Math.min(rendered + this.PAGE_SIZE, filtered.length);
+            const frag = document.createDocumentFragment();
+            for (let i = rendered; i < end; i++) {
+                frag.appendChild(this.buildQuestionCard(filtered[i]));
+            }
+            rendered = end;
+            if (moreBtn) moreBtn.remove();
+            list.appendChild(frag);
 
-            // Header: badge + media badges
-            const header = DOM.create('div', { className: 'question-card-header' });
-            header.appendChild(DOM.create('span', {
-                className: `badge badge-${q.category}`,
-                textContent: `${cat.emoji} ${cat.label}`,
-                style: { fontSize: '0.7rem', padding: '2px 8px' }
-            }));
-
-            // Media badges
-            const badges = DOM.create('div', { className: 'media-badges' });
-            if (q.question.image) badges.appendChild(DOM.create('span', { className: 'media-badge', textContent: '📸' }));
-            if (q.question.audio) badges.appendChild(DOM.create('span', { className: 'media-badge', textContent: '🎵' }));
-            if (q.answer.image) badges.appendChild(DOM.create('span', { className: 'media-badge', textContent: '🖼️' }));
-            if (q.answer.audio) badges.appendChild(DOM.create('span', { className: 'media-badge', textContent: '🎶' }));
-            if (q.question.youtube || q.answer.youtube) badges.appendChild(DOM.create('span', { className: 'media-badge', textContent: '📺' }));
-            header.appendChild(badges);
-            body.appendChild(header);
-
-            // Question text
-            body.appendChild(DOM.create('div', {
-                className: 'question-card-text',
-                textContent: q.question.text
-            }));
-
-            // Answer text
-            body.appendChild(DOM.create('div', {
-                className: 'question-card-answer',
-                textContent: `→ ${q.answer.text}`
-            }));
-
-            card.appendChild(body);
-
-            // Actions
-            const actions = DOM.create('div', { className: 'question-card-actions' });
-            actions.appendChild(DOM.create('button', {
-                className: 'btn btn-sm btn-ghost',
-                textContent: '✏️',
-                onClick: (e) => { e.stopPropagation(); this.editQuestion(q); }
-            }));
-            actions.appendChild(DOM.create('button', {
-                className: 'btn btn-sm btn-ghost',
-                textContent: '🗑️',
-                onClick: (e) => { e.stopPropagation(); this.deleteQuestion(q); }
-            }));
-            card.appendChild(actions);
-
-            list.appendChild(card);
-        }
+            if (rendered < filtered.length) {
+                moreBtn = DOM.create('button', {
+                    className: 'btn btn-outline load-more-btn',
+                    textContent: `Afficher plus (${rendered} / ${filtered.length})`,
+                    onClick: renderBatch
+                });
+                list.appendChild(moreBtn);
+            }
+        };
+        renderBatch();
 
         return list;
+    },
+
+    buildQuestionCard(q) {
+        const cat = Media.getCategoryById(q.category);
+        const card = DOM.create('div', {
+            className: 'question-card',
+            style: { borderLeftColor: cat.color },
+            onClick: () => this.editQuestion(q)
+        });
+
+        const body = DOM.create('div', { className: 'question-card-body' });
+
+        // Header: badge + media badges
+        const header = DOM.create('div', { className: 'question-card-header' });
+        header.appendChild(DOM.create('span', {
+            className: `badge badge-${q.category}`,
+            textContent: `${cat.emoji} ${cat.label}`,
+            style: { fontSize: '0.7rem', padding: '2px 8px' }
+        }));
+
+        // Media badges
+        const badges = DOM.create('div', { className: 'media-badges' });
+        if (q.question.image) badges.appendChild(DOM.create('span', { className: 'media-badge', textContent: '📸' }));
+        if (q.question.audio) badges.appendChild(DOM.create('span', { className: 'media-badge', textContent: '🎵' }));
+        if (q.answer.image) badges.appendChild(DOM.create('span', { className: 'media-badge', textContent: '🖼️' }));
+        if (q.answer.audio) badges.appendChild(DOM.create('span', { className: 'media-badge', textContent: '🎶' }));
+        if (q.question.youtube || q.answer.youtube) badges.appendChild(DOM.create('span', { className: 'media-badge', textContent: '📺' }));
+        header.appendChild(badges);
+        body.appendChild(header);
+
+        // Question text
+        body.appendChild(DOM.create('div', {
+            className: 'question-card-text',
+            textContent: q.question.text
+        }));
+
+        // Answer text
+        body.appendChild(DOM.create('div', {
+            className: 'question-card-answer',
+            textContent: `→ ${q.answer.text}`
+        }));
+
+        card.appendChild(body);
+
+        // Actions
+        const actions = DOM.create('div', { className: 'question-card-actions' });
+        actions.appendChild(DOM.create('button', {
+            className: 'btn btn-sm btn-ghost',
+            textContent: '✏️',
+            onClick: (e) => { e.stopPropagation(); this.editQuestion(q); }
+        }));
+        actions.appendChild(DOM.create('button', {
+            className: 'btn btn-sm btn-ghost',
+            textContent: '🗑️',
+            onClick: (e) => { e.stopPropagation(); this.deleteQuestion(q); }
+        }));
+        card.appendChild(actions);
+
+        return card;
     },
 
     editQuestion(q) {
@@ -290,6 +315,14 @@ const EditorManage = {
         while (ieSection.firstChild) {
             bar.appendChild(ieSection.firstChild);
         }
+
+        // Optimize stored images (downscale huge photos to avoid in-game freezes)
+        bar.appendChild(DOM.create('button', {
+            className: 'btn btn-outline',
+            textContent: '🖼️ Optimiser les images',
+            title: 'Réduit les images trop grandes pour éviter les ralentissements en jeu',
+            onClick: () => ImportExport.doOptimizeImages()
+        }));
 
         // Spacer
         bar.appendChild(DOM.create('div', { className: 'actions-bar-spacer' }));

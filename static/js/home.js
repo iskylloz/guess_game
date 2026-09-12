@@ -49,10 +49,17 @@ App.pages.home = {
                 ])
             ]),
 
-            // Footer
-            DOM.create('div', { className: 'home-footer', textContent: 'Guess the Picture v1.2' })
+            // Footer (version filled from the backend so it never goes stale)
+            DOM.create('div', { className: 'home-footer', textContent: 'Guess the Picture' })
         ]);
 
         container.appendChild(screen);
+
+        API.get('/api/version')
+            .then(info => {
+                const footer = screen.querySelector('.home-footer');
+                if (footer && info.version) footer.textContent = `Guess the Picture v${info.version}`;
+            })
+            .catch(() => {});
     }
 };
